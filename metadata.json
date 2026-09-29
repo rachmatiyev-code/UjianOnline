@@ -1,0 +1,6 @@
+{
+  "name": "UjianOnline — Evaluasi & Analitik Terintegrasi Sheets",
+  "description": "Platform ujian online interaktif seperti Google Forms dengan penilaian otomatis, pengacakan & impor soal multimedia, analitik hasil real-time, serta sinkronisasi database Google Sheets otomatis di folder UjianOnline_Database.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
