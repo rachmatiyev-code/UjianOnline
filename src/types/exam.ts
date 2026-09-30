@@ -89,3 +89,15 @@ export interface WorkspaceDatabaseInfo {
   spreadsheetUrl: string;
   lastSyncedAt: string | null;
 }
+
+export type UserRole = 'guru' | 'siswa';
+
+export interface UserSession {
+  role: UserRole;
+  name: string;
+  identifier: string; // NIP/Email for Guru/Admin, NISN for Siswa
+  studentId?: string;
+  className?: string;
+  email?: string;
+}
+

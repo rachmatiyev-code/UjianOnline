@@ -11,6 +11,7 @@ import {
   Student,
   ExamSubmission,
   WorkspaceDatabaseInfo,
+  UserSession,
 } from './types/exam';
 import {
   initAuth,
@@ -30,8 +31,12 @@ import { SheetsDatabaseView } from './components/SheetsDatabaseView';
 import { StudentAnalysisModal } from './components/StudentAnalysisModal';
 import { QuestionImportModal } from './components/QuestionImportModal';
 import { ConfirmModal, ConfirmDialogState } from './components/ConfirmModal';
+import { LoginPortalView } from './components/LoginPortalView';
+import { TeacherPasswordModal } from './components/TeacherPasswordModal';
 
 type ActiveTab = 'dashboard' | 'exam' | 'questions' | 'students' | 'sheets';
+
+const DEFAULT_TEACHER_PASSWORD = 'guru123';
 
 const STORAGE_KEYS = {
   QUESTIONS: 'ujianonline_questions_v1',
@@ -39,6 +44,8 @@ const STORAGE_KEYS = {
   SUBMISSIONS: 'ujianonline_submissions_v1',
   CONFIG: 'ujianonline_config_v1',
   DB_INFO: 'ujianonline_dbinfo_v1',
+  SESSION: 'ujianonline_rbac_session_v1',
+  TEACHER_PASSWORD: 'ujianonline_teacher_password_v1',
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -52,7 +59,16 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [userSession, setUserSession] = useState<UserSession | null>(() =>
+    loadFromStorage<UserSession | null>(STORAGE_KEYS.SESSION, null)
+  );
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    const savedSession = loadFromStorage<UserSession | null>(
+      STORAGE_KEYS.SESSION,
+      null
+    );
+    return savedSession?.role === 'siswa' ? 'exam' : 'dashboard';
+  });
 
   const [examConfig, setExamConfig] = useState<ExamConfig>(() =>
     loadFromStorage(STORAGE_KEYS.CONFIG, INITIAL_EXAM_CONFIG)
@@ -69,6 +85,16 @@ export default function App() {
   const [dbInfo, setDbInfo] = useState<WorkspaceDatabaseInfo | null>(() =>
     loadFromStorage(STORAGE_KEYS.DB_INFO, null)
   );
+  const [teacherPassword, setTeacherPassword] = useState<string>(() =>
+    loadFromStorage(STORAGE_KEYS.TEACHER_PASSWORD, DEFAULT_TEACHER_PASSWORD)
+  );
+  const [passwordModalState, setPasswordModalState] = useState<{
+    isOpen: boolean;
+    mode: 'verify' | 'change';
+  }>({
+    isOpen: false,
+    mode: 'verify',
+  });
 
   // Auth & Workspace state
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -140,6 +166,36 @@ export default function App() {
     }
   }, [dbInfo]);
 
+  useEffect(() => {
+    try {
+      if (userSession) {
+        localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(userSession));
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.SESSION);
+      }
+    } catch {
+      // ignore
+    }
+  }, [userSession]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.TEACHER_PASSWORD,
+        JSON.stringify(teacherPassword)
+      );
+    } catch {
+      // ignore
+    }
+  }, [teacherPassword]);
+
+  // Enforce RBAC navigation lock: Siswa can ONLY stay on 'exam' (Ruang Ujian)
+  useEffect(() => {
+    if (userSession?.role === 'siswa' && activeTab !== 'exam') {
+      setActiveTab('exam');
+    }
+  }, [userSession, activeTab]);
+
   // Listen for storage events across tabs for real-time teacher monitoring
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -183,6 +239,88 @@ export default function App() {
     );
     return () => unsubscribe();
   }, []);
+
+  // RBAC Login & Role Switching Handlers
+  const handleRbacLogin = useCallback(
+    (session: UserSession, newStudentIfCreated?: Student) => {
+      if (newStudentIfCreated) {
+        setStudents((prev) => [newStudentIfCreated, ...prev]);
+      }
+      setUserSession(session);
+      if (session.role === 'siswa') {
+        setActiveTab('exam');
+        showToast(
+          `Masuk sebagai Siswa (${session.name}). Semua tab guru disembunyikan & akses dibatasi ke Ruang Ujian.`
+        );
+      } else {
+        setActiveTab('dashboard');
+        showToast(
+          `Masuk sebagai Guru/Admin (${session.name}). Seluruh menu navigasi ditampilkan.`
+        );
+      }
+    },
+    [showToast]
+  );
+
+  const handleRbacLogout = useCallback(() => {
+    setUserSession(null);
+    showToast('Anda telah keluar dari sesi. Silakan pilih peran untuk masuk kembali.');
+  }, [showToast]);
+
+  const handleQuickSwitchRole = useCallback(
+    (targetRole: 'siswa' | 'guru') => {
+      if (targetRole === 'siswa') {
+        const defaultStudent = students[0];
+        const nextSession: UserSession = defaultStudent
+          ? {
+              role: 'siswa',
+              name: defaultStudent.name,
+              identifier: defaultStudent.nisn,
+              studentId: defaultStudent.id,
+              className: defaultStudent.className,
+              email: defaultStudent.email,
+            }
+          : {
+              role: 'siswa',
+              name: 'Alya Putri Ramadhani',
+              identifier: '0084192831',
+              className: 'XII MIPA 1',
+              email: 'alya.ramadhani@sekolah.sch.id',
+            };
+        setUserSession(nextSession);
+        setActiveTab('exam');
+        showToast(
+          `Peran diubah ke Siswa (${nextSession.name}). Navigasi dikunci hanya di Ruang Ujian.`
+        );
+      } else {
+        // Switching to Guru/Admin ALWAYS requires entering the teacher-defined password
+        setPasswordModalState({ isOpen: true, mode: 'verify' });
+      }
+    },
+    [students, showToast]
+  );
+
+  const handleVerifiedTeacherModalLogin = useCallback(() => {
+    const nextSession: UserSession = {
+      role: 'guru',
+      name: 'Budi Santoso, M.Pd.',
+      identifier: '198604122011011004',
+      email: userEmail || 'budi.santoso@sekolah.sch.id',
+    };
+    setUserSession(nextSession);
+    setActiveTab('dashboard');
+    showToast(
+      'Password Guru terverifikasi. Seluruh menu navigasi Guru/Admin ditampilkan.'
+    );
+  }, [userEmail, showToast]);
+
+  const handleUpdateTeacherPassword = useCallback(
+    (newPass: string) => {
+      setTeacherPassword(newPass);
+      showToast('Password akses Guru/Admin berhasil diperbarui.');
+    },
+    [showToast]
+  );
 
   const executeGoogleSheetsSync = useCallback(
     async (
@@ -241,6 +379,15 @@ export default function App() {
       if (result) {
         setUserEmail(result.user.email);
         setHasToken(true);
+        if (!userSession || userSession.role !== 'guru') {
+          setUserSession({
+            role: 'guru',
+            name: result.user.displayName || 'Guru / Administrator',
+            identifier: result.user.email || 'ADMIN-GOOGLE',
+            email: result.user.email || undefined,
+          });
+          setActiveTab('dashboard');
+        }
         await executeGoogleSheetsSync(
           students,
           questions,
@@ -452,161 +599,212 @@ export default function App() {
     );
   }, [inspectedSubmission, submissions]);
 
+  const currentStudentPersonalSubmissions = useMemo(() => {
+    if (!userSession || userSession.role !== 'siswa') return [];
+    return submissions.filter(
+      (s) =>
+        (userSession.studentId && s.studentId === userSession.studentId) ||
+        s.studentNisn === userSession.identifier ||
+        s.studentName.toLowerCase() === userSession.name.toLowerCase()
+    );
+  }, [userSession, submissions]);
+
+  // Strict RBAC Tab Guard: If logged in as Siswa, effectiveTab is strictly locked to 'exam'
+  const effectiveTab: ActiveTab =
+    userSession?.role === 'siswa' ? 'exam' : activeTab;
+
+  const visibleNavItems: { id: ActiveTab; label: string; mobileLabel: string }[] =
+    useMemo(() => {
+      if (!userSession) return [];
+      if (userSession.role === 'siswa') {
+        return [{ id: 'exam', label: 'Ruang Ujian', mobileLabel: 'Ruang Ujian' }];
+      }
+      return [
+        { id: 'dashboard', label: 'Dashboard Nilai', mobileLabel: 'Dashboard' },
+        { id: 'exam', label: 'Ruang Ujian', mobileLabel: 'Ruang Ujian' },
+        { id: 'questions', label: 'Bank Soal', mobileLabel: 'Bank Soal' },
+        { id: 'students', label: 'Data Siswa', mobileLabel: 'Data Siswa' },
+        { id: 'sheets', label: 'Database Sheets', mobileLabel: 'Google Sheets' },
+      ];
+    }, [userSession]);
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-slate-900">
       {/* Strict 3-Zone Top Bar Contract */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-6 py-3.5 flex items-center justify-between gap-4">
         {/* Zone 1: Single text element wordmark */}
         <a
-          href="#dashboard"
+          href={userSession?.role === 'siswa' ? '#exam' : '#dashboard'}
           onClick={(e) => {
             e.preventDefault();
-            setActiveTab('dashboard');
+            if (!userSession) return;
+            setActiveTab(userSession.role === 'siswa' ? 'exam' : 'dashboard');
           }}
           className="text-xl font-bold tracking-tight text-slate-900 font-display whitespace-nowrap"
         >
           UjianOnline
         </a>
 
-        {/* Zone 2: 5 clean text navigation links */}
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
-          <button
-            type="button"
-            onClick={() => setActiveTab('dashboard')}
-            className={`py-1 transition-colors whitespace-nowrap border-b-2 ${
-              activeTab === 'dashboard'
-                ? 'text-slate-900 border-sky-700 font-semibold'
-                : 'border-transparent hover:text-slate-900'
-            }`}
-          >
-            Dashboard Nilai
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('exam')}
-            className={`py-1 transition-colors whitespace-nowrap border-b-2 ${
-              activeTab === 'exam'
-                ? 'text-slate-900 border-sky-700 font-semibold'
-                : 'border-transparent hover:text-slate-900'
-            }`}
-          >
-            Ruang Ujian
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('questions')}
-            className={`py-1 transition-colors whitespace-nowrap border-b-2 ${
-              activeTab === 'questions'
-                ? 'text-slate-900 border-sky-700 font-semibold'
-                : 'border-transparent hover:text-slate-900'
-            }`}
-          >
-            Bank Soal
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('students')}
-            className={`py-1 transition-colors whitespace-nowrap border-b-2 ${
-              activeTab === 'students'
-                ? 'text-slate-900 border-sky-700 font-semibold'
-                : 'border-transparent hover:text-slate-900'
-            }`}
-          >
-            Data Siswa
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('sheets')}
-            className={`py-1 transition-colors whitespace-nowrap border-b-2 ${
-              activeTab === 'sheets'
-                ? 'text-slate-900 border-sky-700 font-semibold'
-                : 'border-transparent hover:text-slate-900'
-            }`}
-          >
-            Database Sheets
-          </button>
-        </nav>
+        {/* Zone 2: RBAC-aware clean text navigation links */}
+        {userSession ? (
+          <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+            {visibleNavItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() =>
+                  setActiveTab(
+                    userSession.role === 'siswa' ? 'exam' : item.id
+                  )
+                }
+                className={`py-1 transition-colors whitespace-nowrap border-b-2 ${
+                  effectiveTab === item.id
+                    ? 'text-slate-900 border-sky-700 font-semibold'
+                    : 'border-transparent hover:text-slate-900'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        ) : (
+          <div className="hidden md:block text-xs text-slate-500">
+            Pilih Peran Akses: <strong className="text-slate-800">Siswa</strong> atau{' '}
+            <strong className="text-slate-800">Guru/Admin</strong>
+          </div>
+        )}
 
-        {/* Zone 3: 1-2 primary actions */}
-        <div className="flex items-center gap-3">
-          {!hasToken ? (
-            <button
-              type="button"
-              onClick={handleGoogleLoginAndSync}
-              disabled={isLoggingIn}
-              className="gsi-material-button"
-            >
-              <div className="gsi-material-button-state"></div>
-              <div className="gsi-material-button-content-wrapper">
-                <div className="gsi-material-button-icon">
-                  <svg
-                    version="1.1"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 48 48"
-                    style={{ display: 'block' }}
-                  >
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    ></path>
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    ></path>
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    ></path>
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    ></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                </div>
-                <span className="gsi-material-button-contents">
-                  {isLoggingIn ? 'Menghubungkan...' : 'Sign in with Google'}
+        {/* Zone 3: RBAC Session Controls & Primary Actions */}
+        <div className="flex items-center gap-2">
+          {!userSession ? (
+            <>
+              <button
+                type="button"
+                onClick={() => handleQuickSwitchRole('siswa')}
+                className="px-3.5 py-2 text-xs font-semibold text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors whitespace-nowrap"
+              >
+                Masuk Siswa
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPasswordModalState({ isOpen: true, mode: 'verify' })
+                }
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap"
+              >
+                Login Password Guru
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Active RBAC Role Indicator & Role Switcher */}
+              <div className="hidden sm:flex items-center gap-2 text-xs text-slate-600 mr-1">
+                <span>
+                  Peran:{' '}
+                  <strong className="text-slate-900">
+                    {userSession.role === 'siswa' ? 'Siswa' : 'Guru/Admin'}
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="truncate max-w-[130px]" title={userSession.name}>
+                  {userSession.name}
                 </span>
               </div>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleTriggerSyncWithConfirmation}
-              disabled={isSyncing}
-              className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
-            >
-              {isSyncing ? 'Sinkronisasi...' : 'Sinkronkan Sheets'}
-            </button>
+
+              {userSession.role === 'guru' && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPasswordModalState({ isOpen: true, mode: 'change' })
+                  }
+                  className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors whitespace-nowrap"
+                  title="Atur atau ubah password akses Guru/Admin"
+                >
+                  Atur Password Guru
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleQuickSwitchRole(
+                    userSession.role === 'siswa' ? 'guru' : 'siswa'
+                  )
+                }
+                className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap"
+                title={
+                  userSession.role === 'siswa'
+                    ? 'Masukkan password guru untuk beralih ke mode Guru/Admin'
+                    : 'Beralih ke peran Siswa untuk menyembunyikan tab guru & membatasi di Ruang Ujian'
+                }
+              >
+                {userSession.role === 'siswa'
+                  ? 'Masuk Guru (Password)'
+                  : 'Mode Siswa'}
+              </button>
+
+              {/* Teacher-only Google Sheets Sync Button */}
+              {userSession.role === 'guru' &&
+                (!hasToken ? (
+                  <button
+                    type="button"
+                    onClick={handleGoogleLoginAndSync}
+                    disabled={isLoggingIn}
+                    className="px-3.5 py-1.5 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    {isLoggingIn ? 'Menghubungkan...' : 'Hubungkan Sheets'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleTriggerSyncWithConfirmation}
+                    disabled={isSyncing}
+                    className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    {isSyncing ? 'Sinkronisasi...' : 'Sinkronkan Sheets'}
+                  </button>
+                ))}
+
+              <button
+                type="button"
+                onClick={handleRbacLogout}
+                className="px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 border border-slate-200 rounded-lg transition-colors whitespace-nowrap"
+              >
+                Keluar
+              </button>
+            </>
           )}
         </div>
       </header>
 
-      {/* Mobile Navigation Strip */}
-      <div className="md:hidden bg-white border-b border-slate-200 px-4 py-2 flex items-center gap-2 overflow-x-auto">
-        {(
-          [
-            { id: 'dashboard', label: 'Dashboard' },
-            { id: 'exam', label: 'Ruang Ujian' },
-            { id: 'questions', label: 'Bank Soal' },
-            { id: 'students', label: 'Data Siswa' },
-            { id: 'sheets', label: 'Google Sheets' },
-          ] as { id: ActiveTab; label: string }[]
-        ).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setActiveTab(item.id)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap ${
-              activeTab === item.id
-                ? 'bg-slate-900 text-white'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      {/* Mobile Navigation Strip (RBAC filtered) */}
+      {userSession && (
+        <div className="md:hidden bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between gap-2 overflow-x-auto">
+          <div className="flex items-center gap-2">
+            {visibleNavItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() =>
+                  setActiveTab(
+                    userSession.role === 'siswa' ? 'exam' : item.id
+                  )
+                }
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap ${
+                  effectiveTab === item.id
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {item.mobileLabel}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] font-mono text-slate-500 whitespace-nowrap">
+            {userSession.role === 'siswa' ? 'Akses: Siswa' : 'Akses: Guru/Admin'}
+          </span>
+        </div>
+      )}
 
       {/* Non-intrusive Toast Notification */}
       {toastMessage && (
@@ -617,94 +815,120 @@ export default function App() {
 
       {/* Main Content Container (1440px Desktop Presence) */}
       <main className="flex-1 w-full max-w-[1320px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'dashboard' && (
-          <DashboardView
-            submissions={submissions}
-            questions={questions}
+        {!userSession ? (
+          <LoginPortalView
             students={students}
-            examConfig={examConfig}
-            dbInfo={dbInfo}
-            isSyncing={isSyncing}
-            onSyncNow={handleTriggerSyncWithConfirmation}
-            onSelectSubmission={(sub) => setInspectedSubmission(sub)}
-            onDeleteSubmission={handleDeleteSubmission}
-            onNavigateToExam={() => setActiveTab('exam')}
+            teacherPassword={teacherPassword}
+            isDefaultPassword={teacherPassword === DEFAULT_TEACHER_PASSWORD}
+            isLoggingInGoogle={isLoggingIn}
+            onLogin={handleRbacLogin}
+            onUpdateTeacherPassword={handleUpdateTeacherPassword}
+            onGoogleLoginAsTeacher={handleGoogleLoginAndSync}
           />
-        )}
+        ) : (
+          <>
+            {userSession.role === 'guru' && effectiveTab === 'dashboard' && (
+              <DashboardView
+                submissions={submissions}
+                questions={questions}
+                students={students}
+                examConfig={examConfig}
+                dbInfo={dbInfo}
+                isSyncing={isSyncing}
+                onSyncNow={handleTriggerSyncWithConfirmation}
+                onSelectSubmission={(sub) => setInspectedSubmission(sub)}
+                onDeleteSubmission={handleDeleteSubmission}
+                onNavigateToExam={() => setActiveTab('exam')}
+              />
+            )}
 
-        {activeTab === 'exam' && (
-          <ExamTakerView
-            questions={questions}
-            students={students}
-            examConfig={examConfig}
-            onCompleteExam={handleCompleteExam}
-            onInspectSubmission={(sub) => setInspectedSubmission(sub)}
-          />
-        )}
+            {effectiveTab === 'exam' && (
+              <ExamTakerView
+                questions={questions}
+                students={students}
+                examConfig={examConfig}
+                currentSession={userSession}
+                studentSubmissions={currentStudentPersonalSubmissions}
+                onCompleteExam={handleCompleteExam}
+                onInspectSubmission={(sub) => setInspectedSubmission(sub)}
+              />
+            )}
 
-        {activeTab === 'questions' && (
-          <QuestionBankView
-            questions={questions}
-            examConfig={examConfig}
-            onUpdateExamConfig={setExamConfig}
-            onAddQuestion={handleAddQuestion}
-            onUpdateQuestion={handleUpdateQuestion}
-            onDeleteQuestions={handleDeleteQuestions}
-            onBulkUpdateQuestions={handleBulkUpdateQuestions}
-            onOpenImportModal={() => setIsImportModalOpen(true)}
-          />
-        )}
+            {userSession.role === 'guru' && effectiveTab === 'questions' && (
+              <QuestionBankView
+                questions={questions}
+                examConfig={examConfig}
+                onUpdateExamConfig={setExamConfig}
+                onAddQuestion={handleAddQuestion}
+                onUpdateQuestion={handleUpdateQuestion}
+                onDeleteQuestions={handleDeleteQuestions}
+                onBulkUpdateQuestions={handleBulkUpdateQuestions}
+                onOpenImportModal={() => setIsImportModalOpen(true)}
+              />
+            )}
 
-        {activeTab === 'students' && (
-          <StudentManagerView
-            students={students}
-            submissions={submissions}
-            onAddStudent={handleAddStudent}
-            onUpdateStudent={handleUpdateStudent}
-            onDeleteStudents={handleDeleteStudents}
-            onBulkUpdateStudents={handleBulkUpdateStudents}
-            onInspectSubmission={(sub) => setInspectedSubmission(sub)}
-          />
-        )}
+            {userSession.role === 'guru' && effectiveTab === 'students' && (
+              <StudentManagerView
+                students={students}
+                submissions={submissions}
+                onAddStudent={handleAddStudent}
+                onUpdateStudent={handleUpdateStudent}
+                onDeleteStudents={handleDeleteStudents}
+                onBulkUpdateStudents={handleBulkUpdateStudents}
+                onInspectSubmission={(sub) => setInspectedSubmission(sub)}
+              />
+            )}
 
-        {activeTab === 'sheets' && (
-          <SheetsDatabaseView
-            userEmail={userEmail}
-            hasToken={hasToken}
-            isLoggingIn={isLoggingIn}
-            isSyncing={isSyncing}
-            syncError={syncError}
-            dbInfo={dbInfo}
-            students={students}
-            questions={questions}
-            submissions={submissions}
-            onGoogleLogin={handleGoogleLoginAndSync}
-            onGoogleLogout={handleGoogleLogout}
-            onSyncWithConfirmation={handleTriggerSyncWithConfirmation}
-          />
+            {userSession.role === 'guru' && effectiveTab === 'sheets' && (
+              <SheetsDatabaseView
+                userEmail={userEmail}
+                hasToken={hasToken}
+                isLoggingIn={isLoggingIn}
+                isSyncing={isSyncing}
+                syncError={syncError}
+                dbInfo={dbInfo}
+                students={students}
+                questions={questions}
+                submissions={submissions}
+                onGoogleLogin={handleGoogleLoginAndSync}
+                onGoogleLogout={handleGoogleLogout}
+                onSyncWithConfirmation={handleTriggerSyncWithConfirmation}
+              />
+            )}
+          </>
         )}
       </main>
 
-      {/* Clean Quiet Footer */}
+      {/* Clean Quiet Footer (RBAC-Aware) */}
       <footer className="border-t border-slate-200 bg-white py-4 px-6 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <span>
           UjianOnline — Sistem Evaluasi Terpadu & Integrasi Database Google Sheets (UjianOnline_Database)
         </span>
         <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => setActiveTab('exam')}
-            className="hover:text-slate-900 transition-colors"
-          >
-            Simulasi Ujian
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('sheets')}
-            className="hover:text-slate-900 transition-colors"
-          >
-            Pengaturan Google Sheets
-          </button>
+          {!userSession ? (
+            <span>RBAC Aktif: Masuk sebagai Siswa atau Guru/Admin</span>
+          ) : userSession.role === 'siswa' ? (
+            <span>
+              Hak Akses RBAC: <strong className="text-slate-700">Siswa (Hanya Ruang Ujian)</strong>
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setActiveTab('exam')}
+                className="hover:text-slate-900 transition-colors"
+              >
+                Simulasi Ujian
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('sheets')}
+                className="hover:text-slate-900 transition-colors"
+              >
+                Pengaturan Google Sheets
+              </button>
+            </>
+          )}
         </div>
       </footer>
 
@@ -716,15 +940,30 @@ export default function App() {
         onClose={() => setInspectedSubmission(null)}
       />
 
-      <QuestionImportModal
-        isOpen={isImportModalOpen}
-        onClose={() => setIsImportModalOpen(false)}
-        onImportQuestions={handleImportQuestions}
-      />
+      {userSession?.role === 'guru' && (
+        <QuestionImportModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
+          onImportQuestions={handleImportQuestions}
+        />
+      )}
 
       <ConfirmModal
         dialog={confirmDialog}
         onClose={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      <TeacherPasswordModal
+        isOpen={passwordModalState.isOpen}
+        initialMode={passwordModalState.mode}
+        currentTeacherPassword={teacherPassword}
+        isDefaultPassword={teacherPassword === DEFAULT_TEACHER_PASSWORD}
+        isAlreadyTeacher={userSession?.role === 'guru'}
+        onClose={() =>
+          setPasswordModalState((prev) => ({ ...prev, isOpen: false }))
+        }
+        onVerifiedLogin={handleVerifiedTeacherModalLogin}
+        onUpdatePassword={handleUpdateTeacherPassword}
       />
     </div>
   );

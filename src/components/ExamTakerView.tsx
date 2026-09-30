@@ -14,6 +14,7 @@ import {
   ExamConfig,
   ExamSubmission,
   QuestionResultDetail,
+  UserSession,
 } from '../types/exam';
 import { MediaRenderer } from './MediaRenderer';
 
@@ -21,6 +22,8 @@ interface ExamTakerViewProps {
   questions: Question[];
   students: Student[];
   examConfig: ExamConfig;
+  currentSession: UserSession;
+  studentSubmissions?: ExamSubmission[];
   onCompleteExam: (
     submission: ExamSubmission,
     newStudentIfCreated?: Student
@@ -41,16 +44,56 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
   questions,
   students,
   examConfig,
+  currentSession,
+  studentSubmissions = [],
   onCompleteExam,
   onInspectSubmission,
 }) => {
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
-    students[0]?.id || 'NEW'
+    currentSession.role === 'siswa' && currentSession.studentId
+      ? currentSession.studentId
+      : students[0]?.id || 'NEW'
   );
-  const [customNisn, setCustomNisn] = useState('0089912045');
-  const [customName, setCustomName] = useState('');
-  const [customClass, setCustomClass] = useState('XII MIPA 1');
-  const [customEmail, setCustomEmail] = useState('');
+  const [customNisn, setCustomNisn] = useState(
+    currentSession.role === 'siswa' ? currentSession.identifier : '0089912045'
+  );
+  const [customName, setCustomName] = useState(
+    currentSession.role === 'siswa' ? currentSession.name : ''
+  );
+  const [customClass, setCustomClass] = useState(
+    currentSession.role === 'siswa' && currentSession.className
+      ? currentSession.className
+      : 'XII MIPA 1'
+  );
+  const [customEmail, setCustomEmail] = useState(
+    currentSession.role === 'siswa' && currentSession.email
+      ? currentSession.email
+      : ''
+  );
+
+  // Sync selected student when session changes
+  useEffect(() => {
+    if (currentSession.role === 'siswa') {
+      if (currentSession.studentId) {
+        setSelectedStudentId(currentSession.studentId);
+      } else {
+        const matched = students.find(
+          (s) =>
+            s.nisn === currentSession.identifier ||
+            s.name.toLowerCase() === currentSession.name.toLowerCase()
+        );
+        if (matched) {
+          setSelectedStudentId(matched.id);
+        } else {
+          setSelectedStudentId('NEW');
+          setCustomName(currentSession.name);
+          setCustomNisn(currentSession.identifier);
+          if (currentSession.className) setCustomClass(currentSession.className);
+          if (currentSession.email) setCustomEmail(currentSession.email);
+        }
+      }
+    }
+  }, [currentSession, students]);
 
   const [isExamActive, setIsExamActive] = useState(false);
   const [startedAtIso, setStartedAtIso] = useState<string>('');
@@ -320,19 +363,30 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
 
         {/* Student Identity Card before Starting Exam */}
         <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-5">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900">
-              Identitas Peserta Ujian
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Pilih nama siswa dari database atau daftarkan peserta baru untuk memulai sesi ujian dengan urutan soal teracak.
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">
+                Identitas Peserta Ujian
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {currentSession.role === 'siswa'
+                  ? 'Anda masuk dengan akses Siswa (RBAC). Navigasi guru disembunyikan dan sesi ujian terhubung ke akun Anda.'
+                  : 'Mode Simulasi Guru/Admin: Pilih nama siswa dari database atau daftarkan peserta baru untuk menguji formulir ujian.'}
+              </p>
+            </div>
+            <span className="text-xs font-mono font-semibold text-sky-800">
+              {currentSession.role === 'siswa'
+                ? `Sesi Siswa: ${currentSession.name} (${currentSession.identifier})`
+                : 'Mode Pratinjau Guru/Admin'}
+            </span>
           </div>
 
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Pilih Peserta dari Database Siswa
+                {currentSession.role === 'siswa'
+                  ? 'Peserta Ujian Aktif'
+                  : 'Pilih Peserta dari Database Siswa'}
               </label>
               <select
                 value={selectedStudentId}
@@ -407,7 +461,7 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
               </div>
             )}
 
-            <div className="pt-3 flex items-center justify-between border-t border-slate-200">
+            <div className="pt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200">
               <div className="text-xs text-slate-500">
                 Hasil ujian otomatis disinkronkan ke laporan guru & Google Sheets.
               </div>
@@ -422,6 +476,73 @@ export const ExamTakerView: React.FC<ExamTakerViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Personal Submission History for Siswa role */}
+        {currentSession.role === 'siswa' && studentSubmissions.length > 0 && (
+          <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Riwayat Partisipasi Ujian Saya
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Daftar hasil evaluasi yang pernah dikerjakan oleh akun siswa aktif.
+                </p>
+              </div>
+              <span className="text-xs font-mono text-slate-600">
+                {studentSubmissions.length} Sesi
+              </span>
+            </div>
+
+            <div className="divide-y divide-slate-100">
+              {studentSubmissions.map((sub) => (
+                <div
+                  key={sub.id}
+                  className="py-3 flex flex-wrap items-center justify-between gap-3"
+                >
+                  <div>
+                    <div className="text-xs font-semibold text-slate-900">
+                      {sub.examTitle}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      <span className="font-mono">{sub.id}</span> ·{' '}
+                      {new Date(sub.submittedAt).toLocaleString('id-ID', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })}{' '}
+                      · Durasi:{' '}
+                      <span className="font-mono tabular-nums">
+                        {Math.floor(sub.durationSeconds / 60)}m {sub.durationSeconds % 60}d
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-sm font-mono font-semibold text-slate-900 tabular-nums">
+                        {sub.percentage}% ({sub.gradeLetter})
+                      </div>
+                      <div
+                        className={`text-[11px] font-semibold ${
+                          sub.passed ? 'text-emerald-700' : 'text-amber-700'
+                        }`}
+                      >
+                        {sub.passed ? '● Lulus' : '▲ Remedial'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onInspectSubmission(sub)}
+                      className="px-3 py-1.5 text-xs font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors"
+                    >
+                      Analisis & Pembahasan
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
