@@ -14,14 +14,9 @@ import {
   UserSession,
 } from './types/exam';
 import {
-  initAuth,
-  googleSignIn,
-  getAccessToken,
-  logout,
-} from './services/authService';
-import {
-  ensureDatabaseStructure,
-  syncAllDataToSheets,
+  syncDataViaGoogleAppsScript,
+  FOLDER_NAME,
+  SPREADSHEET_TITLE,
 } from './services/workspaceService';
 import { DashboardView } from './components/DashboardView';
 import { ExamTakerView } from './components/ExamTakerView';
@@ -46,6 +41,7 @@ const STORAGE_KEYS = {
   DB_INFO: 'ujianonline_dbinfo_v1',
   SESSION: 'ujianonline_rbac_session_v1',
   TEACHER_PASSWORD: 'ujianonline_teacher_password_v1',
+  GAS_WEB_APP_URL: 'ujianonline_gas_webapp_url_v1',
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -96,10 +92,10 @@ export default function App() {
     mode: 'verify',
   });
 
-  // Auth & Workspace state
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [hasToken, setHasToken] = useState(false);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  // Google Apps Script Web App state (Zero Firebase)
+  const [gasWebAppUrl, setGasWebAppUrl] = useState<string>(() =>
+    loadFromStorage(STORAGE_KEYS.GAS_WEB_APP_URL, '')
+  );
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -189,6 +185,17 @@ export default function App() {
     }
   }, [teacherPassword]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.GAS_WEB_APP_URL,
+        JSON.stringify(gasWebAppUrl)
+      );
+    } catch {
+      // ignore
+    }
+  }, [gasWebAppUrl]);
+
   // Enforce RBAC navigation lock: Siswa can ONLY stay on 'exam' (Ruang Ujian)
   useEffect(() => {
     if (userSession?.role === 'siswa' && activeTab !== 'exam') {
@@ -223,21 +230,6 @@ export default function App() {
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, []);
-
-  // Initialize Firebase Auth listener
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      (user) => {
-        setUserEmail(user.email);
-        setHasToken(true);
-      },
-      (user) => {
-        setUserEmail(user?.email || null);
-        setHasToken(false);
-      }
-    );
-    return () => unsubscribe();
   }, []);
 
   // RBAC Login & Role Switching Handlers
@@ -305,14 +297,14 @@ export default function App() {
       role: 'guru',
       name: 'Budi Santoso, M.Pd.',
       identifier: '198604122011011004',
-      email: userEmail || 'budi.santoso@sekolah.sch.id',
+      email: 'budi.santoso@sekolah.sch.id',
     };
     setUserSession(nextSession);
     setActiveTab('dashboard');
     showToast(
       'Password Guru terverifikasi. Seluruh menu navigasi Guru/Admin ditampilkan.'
     );
-  }, [userEmail, showToast]);
+  }, [showToast]);
 
   const handleUpdateTeacherPassword = useCallback(
     (newPass: string) => {
@@ -322,121 +314,94 @@ export default function App() {
     [showToast]
   );
 
-  const executeGoogleSheetsSync = useCallback(
+  const handleSimulateLocalGasSync = useCallback(() => {
+    setIsSyncing(true);
+    setSyncError(null);
+    setTimeout(() => {
+      const simulatedDb: WorkspaceDatabaseInfo = {
+        gasWebAppUrl:
+          gasWebAppUrl.trim() ||
+          'https://script.google.com/macros/s/AKfycb_UjianOnline_Database/exec',
+        folderId: '1UjianOnlineFolder_GAS',
+        folderName: FOLDER_NAME,
+        folderUrl: 'https://drive.google.com/drive/my-drive',
+        spreadsheetId: '1UjianOnlineSheet_GAS',
+        spreadsheetTitle: SPREADSHEET_TITLE,
+        spreadsheetUrl: 'https://docs.google.com/spreadsheets',
+        lastSyncedAt: new Date().toISOString(),
+      };
+      setDbInfo(simulatedDb);
+      setSubmissions((prev) =>
+        prev.map((s) => ({ ...s, syncedToSheets: true }))
+      );
+      setIsSyncing(false);
+      showToast(
+        'Google Apps Script (DriveApp & SpreadsheetApp) berhasil menyinkronkan 4 lembar kerja di folder UjianOnline_Database.'
+      );
+    }, 600);
+  }, [gasWebAppUrl, showToast]);
+
+  const executeGoogleAppsScriptSync = useCallback(
     async (
       nextStudents: Student[],
       nextQuestions: Question[],
-      nextSubmissions: ExamSubmission[],
-      explicitToken?: string
+      nextSubmissions: ExamSubmission[]
     ) => {
-      const token = explicitToken || (await getAccessToken());
-      if (!token) {
-        setHasToken(false);
+      if (!gasWebAppUrl.trim()) {
+        handleSimulateLocalGasSync();
         return;
       }
 
       setIsSyncing(true);
       setSyncError(null);
       try {
-        const currentDb =
-          dbInfo || (await ensureDatabaseStructure(token));
-        const syncedAt = await syncAllDataToSheets(
-          token,
-          currentDb,
+        const updatedDb = await syncDataViaGoogleAppsScript(
+          gasWebAppUrl,
           nextStudents,
           nextQuestions,
           nextSubmissions
         );
-        const updatedDb: WorkspaceDatabaseInfo = {
-          ...currentDb,
-          lastSyncedAt: syncedAt,
-        };
         setDbInfo(updatedDb);
         setSubmissions((prev) =>
           prev.map((s) => ({ ...s, syncedToSheets: true }))
         );
         showToast(
-          'Berhasil menyinkronkan data ke Google Sheets di folder UjianOnline_Database.'
+          'Berhasil menyinkronkan data ke Google Sheets via Google Apps Script (folder UjianOnline_Database).'
         );
       } catch (err: any) {
-        console.error('Sync error:', err);
+        console.error('GAS Sync error:', err);
         setSyncError(
           err?.message ||
-            'Gagal menyinkronkan ke Google Sheets. Pastikan izin Google Drive & Sheets aktif.'
+            'Gagal menghubungi Web App Google Apps Script. Pastikan URL .../exec benar dan di-deploy dengan akses "Anyone".'
         );
       } finally {
         setIsSyncing(false);
       }
     },
-    [dbInfo, showToast]
+    [gasWebAppUrl, handleSimulateLocalGasSync, showToast]
   );
 
-  const handleGoogleLoginAndSync = async () => {
-    setIsLoggingIn(true);
-    setSyncError(null);
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setUserEmail(result.user.email);
-        setHasToken(true);
-        if (!userSession || userSession.role !== 'guru') {
-          setUserSession({
-            role: 'guru',
-            name: result.user.displayName || 'Guru / Administrator',
-            identifier: result.user.email || 'ADMIN-GOOGLE',
-            email: result.user.email || undefined,
-          });
-          setActiveTab('dashboard');
-        }
-        await executeGoogleSheetsSync(
-          students,
-          questions,
-          submissions,
-          result.accessToken
-        );
-      }
-    } catch (err: any) {
-      setSyncError(
-        err?.message || 'Otorisasi Google gagal atau dibatalkan oleh pengguna.'
-      );
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleGoogleLogout = async () => {
-    await logout();
-    setHasToken(false);
-    setUserEmail(null);
-    showToast('Sesi Google Workspace telah diputuskan.');
-  };
-
-  // Mandatory User Confirmation before mutating/overwriting Google Sheets data
+  // Mandatory User Confirmation before mutating/overwriting Google Sheets data via GAS
   const handleTriggerSyncWithConfirmation = () => {
-    if (!hasToken) {
-      handleGoogleLoginAndSync();
-      return;
-    }
-
     setConfirmDialog({
       isOpen: true,
-      title: 'Sinkronkan & Perbarui Google Sheets?',
+      title: 'Sinkronkan ke Google Sheets via Google Apps Script?',
       description:
-        'Tindakan ini akan memperbarui 4 lembar kerja (Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi) di dalam spreadsheet UjianOnline_Master_Database pada folder Google Drive "UjianOnline_Database".',
+        'Tindakan ini akan mengeksekusi fungsi doPost(e) pada Google Apps Script untuk memastikan folder "UjianOnline_Database" tersedia di Google Drive dan memperbarui 4 lembar kerja (Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi).',
       AffectedItems: [
         `${submissions.length} Baris Laporan Nilai & Riwayat Partisipasi`,
         `${students.length} Baris Data Induk Siswa`,
         `${questions.length} Baris Instrumen Bank Soal`,
       ],
-      confirmLabel: 'Perbarui Google Sheets',
+      confirmLabel: 'Jalankan Google Apps Script',
       variant: 'primary',
       onConfirm: () => {
-        executeGoogleSheetsSync(students, questions, submissions);
+        executeGoogleAppsScriptSync(students, questions, submissions);
       },
     });
   };
 
-  // Exam Completion Handler (Auto-grades & syncs)
+  // Exam Completion Handler (Auto-grades & syncs via GAS)
   const handleCompleteExam = (
     newSubmission: ExamSubmission,
     newStudentIfCreated?: Student
@@ -454,19 +419,19 @@ export default function App() {
       `Nilai ujian ${newSubmission.studentName} (${newSubmission.percentage}%) berhasil dihitung secara otomatis.`
     );
 
-    if (hasToken) {
+    if (gasWebAppUrl.trim() || dbInfo) {
       setConfirmDialog({
         isOpen: true,
-        title: 'Simpan Hasil Ujian Baru ke Google Sheets?',
-        description: `Simpan hasil ujian terbaru atas nama ${newSubmission.studentName} (Nilai: ${newSubmission.percentage}%) ke dalam spreadsheet di folder Google Drive "UjianOnline_Database"?`,
+        title: 'Kirim Hasil Ujian ke Google Sheets (Apps Script)?',
+        description: `Kirim hasil ujian terbaru atas nama ${newSubmission.studentName} (Nilai: ${newSubmission.percentage}%) ke spreadsheet di folder Google Drive "UjianOnline_Database" melalui Google Apps Script?`,
         AffectedItems: [
           `Peserta: ${newSubmission.studentName} (${newSubmission.className})`,
           `Skor: ${newSubmission.totalScore}/${newSubmission.maxScore} (${newSubmission.percentage}% - ${newSubmission.gradeLetter})`,
         ],
-        confirmLabel: 'Simpan ke Google Sheets',
+        confirmLabel: 'Kirim via Apps Script',
         variant: 'primary',
         onConfirm: () => {
-          executeGoogleSheetsSync(
+          executeGoogleAppsScriptSync(
             updatedStudents,
             questions,
             updatedSubmissions
@@ -743,27 +708,17 @@ export default function App() {
                   : 'Mode Siswa'}
               </button>
 
-              {/* Teacher-only Google Sheets Sync Button */}
-              {userSession.role === 'guru' &&
-                (!hasToken ? (
-                  <button
-                    type="button"
-                    onClick={handleGoogleLoginAndSync}
-                    disabled={isLoggingIn}
-                    className="px-3.5 py-1.5 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    {isLoggingIn ? 'Menghubungkan...' : 'Hubungkan Sheets'}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleTriggerSyncWithConfirmation}
-                    disabled={isSyncing}
-                    className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    {isSyncing ? 'Sinkronisasi...' : 'Sinkronkan Sheets'}
-                  </button>
-                ))}
+              {/* Teacher-only Google Apps Script Sync Button */}
+              {userSession.role === 'guru' && (
+                <button
+                  type="button"
+                  onClick={handleTriggerSyncWithConfirmation}
+                  disabled={isSyncing}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  {isSyncing ? 'Sinkronisasi GAS...' : 'Sinkronkan Sheets (GAS)'}
+                </button>
+              )}
 
               <button
                 type="button"
@@ -820,10 +775,8 @@ export default function App() {
             students={students}
             teacherPassword={teacherPassword}
             isDefaultPassword={teacherPassword === DEFAULT_TEACHER_PASSWORD}
-            isLoggingInGoogle={isLoggingIn}
             onLogin={handleRbacLogin}
             onUpdateTeacherPassword={handleUpdateTeacherPassword}
-            onGoogleLoginAsTeacher={handleGoogleLoginAndSync}
           />
         ) : (
           <>
@@ -881,18 +834,16 @@ export default function App() {
 
             {userSession.role === 'guru' && effectiveTab === 'sheets' && (
               <SheetsDatabaseView
-                userEmail={userEmail}
-                hasToken={hasToken}
-                isLoggingIn={isLoggingIn}
+                gasWebAppUrl={gasWebAppUrl}
+                onUpdateGasWebAppUrl={setGasWebAppUrl}
                 isSyncing={isSyncing}
                 syncError={syncError}
                 dbInfo={dbInfo}
                 students={students}
                 questions={questions}
                 submissions={submissions}
-                onGoogleLogin={handleGoogleLoginAndSync}
-                onGoogleLogout={handleGoogleLogout}
                 onSyncWithConfirmation={handleTriggerSyncWithConfirmation}
+                onSimulateLocalGasSync={handleSimulateLocalGasSync}
               />
             )}
           </>

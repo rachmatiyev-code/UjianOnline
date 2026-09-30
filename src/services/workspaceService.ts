@@ -5,203 +5,178 @@ import {
   WorkspaceDatabaseInfo,
 } from '../types/exam';
 
-const FOLDER_NAME = 'UjianOnline_Database';
-const SPREADSHEET_TITLE = 'UjianOnline_Master_Database';
+export const FOLDER_NAME = 'UjianOnline_Database';
+export const SPREADSHEET_TITLE = 'UjianOnline_Master_Database';
 
-const TAB_NAMES = {
+export const TAB_NAMES = {
   RESULTS: 'Hasil_Ujian',
   STUDENTS: 'Data_Siswa',
   QUESTIONS: 'Bank_Soal',
   HISTORY: 'Riwayat_Partisipasi',
 };
 
-async function fetchWithAuth(url: string, accessToken: string, options: RequestInit = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set('Authorization', `Bearer ${accessToken}`);
-  if (options.body && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  const res = await fetch(url, { ...options, headers });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Google API Error (${res.status}): ${errText}`);
-  }
-  return res.json();
-}
-
 /**
- * Finds or creates the dedicated "UjianOnline_Database" folder in Google Drive,
- * then finds or creates the Master Google Sheets database inside that folder
- * with all 4 required sheets (Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi).
+ * Complete Google Apps Script (Code.gs) template.
+ * Uses native DriveApp & SpreadsheetApp (Zero Firebase dependency) to automatically:
+ * 1. Find or create folder "UjianOnline_Database" in Google Drive.
+ * 2. Find or create spreadsheet "UjianOnline_Master_Database" inside that folder.
+ * 3. Create and populate 4 structured tabs: Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi.
+ * 4. Expose doPost(e) and doGet(e) Web App endpoints for real-time two-way sync.
  */
-export async function ensureDatabaseStructure(
-  accessToken: string
-): Promise<WorkspaceDatabaseInfo> {
-  // 1. Search for folder "UjianOnline_Database"
-  const folderQuery = encodeURIComponent(
-    `mimeType = 'application/vnd.google-apps.folder' and name = '${FOLDER_NAME}' and trashed = false`
-  );
-  const folderSearch = await fetchWithAuth(
-    `https://www.googleapis.com/drive/v3/files?q=${folderQuery}&fields=files(id,name,webViewLink)`,
-    accessToken
-  );
+export const GOOGLE_APPS_SCRIPT_CODE = `/**
+ * UjianOnline — Google Apps Script Backend (Code.gs)
+ * Tanpa Firebase — Menggunakan DriveApp & SpreadsheetApp Bawaan Google
+ *
+ * Cara Penggunaan:
+ * 1. Buka https://script.google.com dan buat proyek baru.
+ * 2. Tempel seluruh kode ini ke dalam file Code.gs lalu simpan.
+ * 3. Klik "Deploy" > "New deployment" > Pilih jenis "Web app".
+ * 4. Execute as: "Me" | Who has access: "Anyone".
+ * 5. Salin Web App URL (https://script.google.com/macros/s/.../exec) ke aplikasi UjianOnline.
+ */
 
-  let folderId: string;
-  let folderUrl: string;
+const FOLDER_NAME = 'UjianOnline_Database';
+const SPREADSHEET_TITLE = 'UjianOnline_Master_Database';
+const TABS = ['Hasil_Ujian', 'Data_Siswa', 'Bank_Soal', 'Riwayat_Partisipasi'];
 
-  if (folderSearch.files && folderSearch.files.length > 0) {
-    folderId = folderSearch.files[0].id;
-    folderUrl =
-      folderSearch.files[0].webViewLink ||
-      `https://drive.google.com/drive/folders/${folderId}`;
+function ensureDatabaseInDrive() {
+  // 1. Cari atau buat folder khusus "UjianOnline_Database"
+  let folder;
+  const folders = DriveApp.getFoldersByName(FOLDER_NAME);
+  if (folders.hasNext()) {
+    folder = folders.next();
   } else {
-    // Create folder "UjianOnline_Database"
-    const createdFolder = await fetchWithAuth(
-      'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink',
-      accessToken,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          name: FOLDER_NAME,
-          mimeType: 'application/vnd.google-apps.folder',
-        }),
-      }
-    );
-    folderId = createdFolder.id;
-    folderUrl =
-      createdFolder.webViewLink || `https://drive.google.com/drive/folders/${folderId}`;
+    folder = DriveApp.createFolder(FOLDER_NAME);
   }
 
-  // 2. Search for spreadsheet inside "UjianOnline_Database"
-  const sheetQuery = encodeURIComponent(
-    `mimeType = 'application/vnd.google-apps.spreadsheet' and name = '${SPREADSHEET_TITLE}' and '${folderId}' in parents and trashed = false`
-  );
-  const sheetSearch = await fetchWithAuth(
-    `https://www.googleapis.com/drive/v3/files?q=${sheetQuery}&fields=files(id,name,webViewLink)`,
-    accessToken
-  );
-
-  let spreadsheetId: string;
-  let spreadsheetUrl: string;
-
-  if (sheetSearch.files && sheetSearch.files.length > 0) {
-    spreadsheetId = sheetSearch.files[0].id;
-    spreadsheetUrl =
-      sheetSearch.files[0].webViewLink ||
-      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  // 2. Cari atau buat spreadsheet di dalam folder "UjianOnline_Database"
+  let spreadsheet;
+  const files = folder.getFilesByName(SPREADSHEET_TITLE);
+  if (files.hasNext()) {
+    const file = files.next();
+    spreadsheet = SpreadsheetApp.openById(file.getId());
   } else {
-    // Create spreadsheet directly inside UjianOnline_Database folder via Drive API
-    const createdSheetFile = await fetchWithAuth(
-      'https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink',
-      accessToken,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          name: SPREADSHEET_TITLE,
-          mimeType: 'application/vnd.google-apps.spreadsheet',
-          parents: [folderId],
-        }),
-      }
-    );
-    spreadsheetId = createdSheetFile.id;
-    spreadsheetUrl =
-      createdSheetFile.webViewLink ||
-      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+    spreadsheet = SpreadsheetApp.create(SPREADSHEET_TITLE);
+    const ssFile = DriveApp.getFileById(spreadsheet.getId());
+    ssFile.moveTo(folder);
   }
 
-  // 3. Inspect existing sheet tabs via Sheets API metadata (never hardcode "Sheet1")
-  const meta = await fetchWithAuth(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`,
-    accessToken
-  );
-  const existingSheets: { title: string; sheetId: number }[] = (meta.sheets || []).map(
-    (s: any) => ({
-      title: s.properties?.title || '',
-      sheetId: s.properties?.sheetId ?? 0,
-    })
-  );
-
-  const existingTitles = new Set(existingSheets.map((s) => s.title));
-  const requiredTabs = [
-    TAB_NAMES.RESULTS,
-    TAB_NAMES.STUDENTS,
-    TAB_NAMES.QUESTIONS,
-    TAB_NAMES.HISTORY,
-  ];
-
-  const requests: any[] = [];
-
-  // If the first default tab is not one of our required tabs and we have no required tabs yet, rename the first tab to Hasil_Ujian
-  if (
-    existingSheets.length === 1 &&
-    !existingTitles.has(TAB_NAMES.RESULTS) &&
-    existingSheets[0].title !== TAB_NAMES.RESULTS
-  ) {
-    requests.push({
-      updateSheetProperties: {
-        properties: {
-          sheetId: existingSheets[0].sheetId,
-          title: TAB_NAMES.RESULTS,
-        },
-        fields: 'title',
-      },
-    });
-    existingTitles.add(TAB_NAMES.RESULTS);
+  // 3. Pastikan 4 lembar kerja (tab) tersedia
+  const existingSheets = spreadsheet.getSheets();
+  if (existingSheets.length === 1 && existingSheets[0].getName() !== TABS[0]) {
+    existingSheets[0].setName(TABS[0]);
   }
 
-  for (const tabTitle of requiredTabs) {
-    if (!existingTitles.has(tabTitle)) {
-      requests.push({
-        addSheet: {
-          properties: {
-            title: tabTitle,
-            gridProperties: {
-              rowCount: 1000,
-              columnCount: 15,
-              frozenRowCount: 1,
-            },
-          },
-        },
-      });
+  TABS.forEach(function(tabName) {
+    let sheet = spreadsheet.getSheetByName(tabName);
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet(tabName);
     }
-  }
-
-  if (requests.length > 0) {
-    await fetchWithAuth(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
-      accessToken,
-      {
-        method: 'POST',
-        body: JSON.stringify({ requests }),
-      }
-    );
-  }
+    sheet.setFrozenRows(1);
+  });
 
   return {
-    folderId,
+    folderId: folder.getId(),
     folderName: FOLDER_NAME,
-    folderUrl,
-    spreadsheetId,
+    folderUrl: folder.getUrl(),
+    spreadsheetId: spreadsheet.getId(),
     spreadsheetTitle: SPREADSHEET_TITLE,
-    spreadsheetUrl,
-    lastSyncedAt: new Date().toISOString(),
+    spreadsheetUrl: spreadsheet.getUrl(),
+    spreadsheet: spreadsheet
   };
 }
 
-/**
- * Synchronizes all 4 sheets (Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi)
- * with current application data.
- */
-export async function syncAllDataToSheets(
-  accessToken: string,
-  dbInfo: WorkspaceDatabaseInfo,
+function writeSheetData(sheet, header, rows) {
+  sheet.clearContents();
+  const allRows = [header].concat(rows || []);
+  if (allRows.length > 0 && allRows[0].length > 0) {
+    sheet.getRange(1, 1, allRows.length, allRows[0].length).setValues(allRows);
+    sheet.getRange(1, 1, 1, allRows[0].length).setFontWeight('bold').setBackground('#F1F5F9');
+  }
+}
+
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    const db = ensureDatabaseInDrive();
+    const ss = db.spreadsheet;
+
+    if (payload.action === 'syncAll') {
+      writeSheetData(
+        ss.getSheetByName('Hasil_Ujian'),
+        payload.tables.resultsHeader,
+        payload.tables.resultsRows
+      );
+      writeSheetData(
+        ss.getSheetByName('Data_Siswa'),
+        payload.tables.studentsHeader,
+        payload.tables.studentsRows
+      );
+      writeSheetData(
+        ss.getSheetByName('Bank_Soal'),
+        payload.tables.questionsHeader,
+        payload.tables.questionsRows
+      );
+      writeSheetData(
+        ss.getSheetByName('Riwayat_Partisipasi'),
+        payload.tables.historyHeader,
+        payload.tables.historyRows
+      );
+    }
+
+    return ContentService.createTextOutput(
+      JSON.stringify({
+        status: 'success',
+        folderId: db.folderId,
+        folderName: db.folderName,
+        folderUrl: db.folderUrl,
+        spreadsheetId: db.spreadsheetId,
+        spreadsheetTitle: db.spreadsheetTitle,
+        spreadsheetUrl: db.spreadsheetUrl,
+        lastSyncedAt: new Date().toISOString()
+      })
+    ).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(
+      JSON.stringify({
+        status: 'error',
+        message: err.toString()
+      })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  try {
+    const db = ensureDatabaseInDrive();
+    return ContentService.createTextOutput(
+      JSON.stringify({
+        status: 'success',
+        folderId: db.folderId,
+        folderName: db.folderName,
+        folderUrl: db.folderUrl,
+        spreadsheetId: db.spreadsheetId,
+        spreadsheetTitle: db.spreadsheetTitle,
+        spreadsheetUrl: db.spreadsheetUrl,
+        lastSyncedAt: new Date().toISOString()
+      })
+    ).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(
+      JSON.stringify({
+        status: 'error',
+        message: err.toString()
+      })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+`;
+
+export function buildSheetsTablePayload(
   students: Student[],
   questions: Question[],
   submissions: ExamSubmission[]
-): Promise<string> {
-  const { spreadsheetId } = dbInfo;
-
-  // Build rows for Hasil_Ujian
+) {
   const resultsHeader = [
     'ID Hasil',
     'Waktu Selesai',
@@ -236,7 +211,6 @@ export async function syncAllDataToSheets(
     ];
   });
 
-  // Build rows for Data_Siswa (with aggregated participation metrics)
   const studentsHeader = [
     'ID Siswa',
     'NISN',
@@ -281,7 +255,6 @@ export async function syncAllDataToSheets(
     ];
   });
 
-  // Build rows for Bank_Soal
   const questionsHeader = [
     'ID Soal',
     'Topik / Kompetensi',
@@ -307,7 +280,6 @@ export async function syncAllDataToSheets(
     q.explanation,
   ]);
 
-  // Build rows for Riwayat_Partisipasi (granular per-attempt & per-topic log)
   const historyHeader = [
     'ID Partisipasi',
     'Waktu Mulai',
@@ -349,52 +321,111 @@ export async function syncAllDataToSheets(
     ];
   });
 
-  // Clear existing ranges first so deleted items don't leave stale rows
-  await fetchWithAuth(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchClear`,
-    accessToken,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        ranges: [
-          `${TAB_NAMES.RESULTS}!A1:Z1000`,
-          `${TAB_NAMES.STUDENTS}!A1:Z1000`,
-          `${TAB_NAMES.QUESTIONS}!A1:Z1000`,
-          `${TAB_NAMES.HISTORY}!A1:Z1000`,
-        ],
-      }),
-    }
-  );
+  return {
+    resultsHeader,
+    resultsRows,
+    studentsHeader,
+    studentsRows,
+    questionsHeader,
+    questionsRows,
+    historyHeader,
+    historyRows,
+  };
+}
 
-  // Batch update all 4 tabs
-  await fetchWithAuth(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
-    accessToken,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        valueInputOption: 'USER_ENTERED',
-        data: [
-          {
-            range: `${TAB_NAMES.RESULTS}!A1`,
-            values: [resultsHeader, ...resultsRows],
-          },
-          {
-            range: `${TAB_NAMES.STUDENTS}!A1`,
-            values: [studentsHeader, ...studentsRows],
-          },
-          {
-            range: `${TAB_NAMES.QUESTIONS}!A1`,
-            values: [questionsHeader, ...questionsRows],
-          },
-          {
-            range: `${TAB_NAMES.HISTORY}!A1`,
-            values: [historyHeader, ...historyRows],
-          },
-        ],
-      }),
-    }
-  );
+/**
+ * Synchronizes all 4 sheets to Google Drive ("UjianOnline_Database") & Google Sheets
+ * via Google Apps Script Web App URL (text/plain POST to avoid CORS preflight blockage).
+ */
+export async function syncDataViaGoogleAppsScript(
+  gasWebAppUrl: string,
+  students: Student[],
+  questions: Question[],
+  submissions: ExamSubmission[]
+): Promise<WorkspaceDatabaseInfo> {
+  const trimmedUrl = gasWebAppUrl.trim();
+  if (!trimmedUrl) {
+    throw new Error(
+      'Mohon masukkan Web App URL Google Apps Script (https://script.google.com/macros/s/.../exec) terlebih dahulu di menu Database Sheets.'
+    );
+  }
 
-  return new Date().toISOString();
+  const tables = buildSheetsTablePayload(students, questions, submissions);
+
+  const response = await fetch(trimmedUrl, {
+    method: 'POST',
+    headers: {
+      // text/plain prevents browser CORS preflight OPTIONS failure on Google Apps Script endpoints
+      'Content-Type': 'text/plain;charset=utf-8',
+    },
+    body: JSON.stringify({
+      action: 'syncAll',
+      folderName: FOLDER_NAME,
+      spreadsheetTitle: SPREADSHEET_TITLE,
+      tables,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Google Apps Script HTTP Error (${response.status}): Pastikan Web App di-deploy dengan akses "Anyone".`
+    );
+  }
+
+  const data = await response.json();
+  if (data.status === 'error') {
+    throw new Error(`Google Apps Script Error: ${data.message}`);
+  }
+
+  return {
+    gasWebAppUrl: trimmedUrl,
+    folderId: data.folderId || 'GAS-FOLDER-ID',
+    folderName: data.folderName || FOLDER_NAME,
+    folderUrl: data.folderUrl || 'https://drive.google.com/drive/my-drive',
+    spreadsheetId: data.spreadsheetId || 'GAS-SHEET-ID',
+    spreadsheetTitle: data.spreadsheetTitle || SPREADSHEET_TITLE,
+    spreadsheetUrl: data.spreadsheetUrl || 'https://docs.google.com/spreadsheets',
+    lastSyncedAt: data.lastSyncedAt || new Date().toISOString(),
+  };
+}
+
+export function exportTabAsCsv(
+  tabName: 'Hasil_Ujian' | 'Data_Siswa' | 'Bank_Soal' | 'Riwayat_Partisipasi',
+  students: Student[],
+  questions: Question[],
+  submissions: ExamSubmission[]
+) {
+  const tables = buildSheetsTablePayload(students, questions, submissions);
+  let header: string[] = [];
+  let rows: string[][] = [];
+
+  if (tabName === 'Hasil_Ujian') {
+    header = tables.resultsHeader;
+    rows = tables.resultsRows;
+  } else if (tabName === 'Data_Siswa') {
+    header = tables.studentsHeader;
+    rows = tables.studentsRows;
+  } else if (tabName === 'Bank_Soal') {
+    header = tables.questionsHeader;
+    rows = tables.questionsRows;
+  } else {
+    header = tables.historyHeader;
+    rows = tables.historyRows;
+  }
+
+  const escapeCsv = (val: string) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+  const csvContent = [
+    header.map(escapeCsv).join(','),
+    ...rows.map((r) => r.map(escapeCsv).join(',')),
+  ].join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', `${SPREADSHEET_TITLE}_${tabName}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }

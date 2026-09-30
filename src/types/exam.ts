@@ -81,6 +81,7 @@ export interface ExamConfig {
 }
 
 export interface WorkspaceDatabaseInfo {
+  gasWebAppUrl?: string;
   folderId: string;
   folderName: string;
   folderUrl: string;

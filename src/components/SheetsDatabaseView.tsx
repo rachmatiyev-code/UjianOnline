@@ -5,7 +5,11 @@ import {
   RefreshCw,
   ExternalLink,
   CheckCircle2,
-  LogOut,
+  Code2,
+  Copy,
+  Check,
+  Download,
+  Link2,
 } from 'lucide-react';
 import {
   Student,
@@ -13,155 +17,243 @@ import {
   ExamSubmission,
   WorkspaceDatabaseInfo,
 } from '../types/exam';
+import {
+  GOOGLE_APPS_SCRIPT_CODE,
+  exportTabAsCsv,
+} from '../services/workspaceService';
 
 interface SheetsDatabaseViewProps {
-  userEmail: string | null;
-  hasToken: boolean;
-  isLoggingIn: boolean;
+  gasWebAppUrl: string;
+  onUpdateGasWebAppUrl: (url: string) => void;
   isSyncing: boolean;
   syncError: string | null;
   dbInfo: WorkspaceDatabaseInfo | null;
   students: Student[];
   questions: Question[];
   submissions: ExamSubmission[];
-  onGoogleLogin: () => void;
-  onGoogleLogout: () => void;
   onSyncWithConfirmation: () => void;
+  onSimulateLocalGasSync: () => void;
 }
 
 export const SheetsDatabaseView: React.FC<SheetsDatabaseViewProps> = ({
-  userEmail,
-  hasToken,
-  isLoggingIn,
+  gasWebAppUrl,
+  onUpdateGasWebAppUrl,
   isSyncing,
   syncError,
   dbInfo,
   students,
   questions,
   submissions,
-  onGoogleLogin,
-  onGoogleLogout,
   onSyncWithConfirmation,
+  onSimulateLocalGasSync,
 }) => {
   const [activeSheetTab, setActiveSheetTab] = useState<
     'Hasil_Ujian' | 'Data_Siswa' | 'Bank_Soal' | 'Riwayat_Partisipasi'
   >('Hasil_Ujian');
+  const [showGasCode, setShowGasCode] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  const handleCopyGasCode = async () => {
+    try {
+      await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 3000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const isUrlConfigured = gasWebAppUrl.trim().startsWith('https://script.google.com/');
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-6 border-b border-slate-200">
         <div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span>Integrasi Google Workspace</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span>Integrasi Google Apps Script (Tanpa Firebase)</span>
             <span aria-hidden="true">·</span>
-            <span>Folder Otomatis: <strong className="font-mono">UjianOnline_Database</strong></span>
+            <span>
+              Folder Otomatis: <strong className="font-mono">UjianOnline_Database</strong>
+            </span>
             <span aria-hidden="true">·</span>
             <span>4 Lembar Kerja Terstruktur</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-semibold text-slate-900 mt-1">
-            Database Google Sheets & Sinkronisasi Drive
+            Database Google Sheets & Google Apps Script
           </h1>
           <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-            Seluruh hasil ujian, daftar induk siswa, bank soal, dan riwayat partisipasi disimpan secara otomatis ke dalam Google Sheets di folder khusus <strong>UjianOnline_Database</strong>.
+            Menghubungkan aplikasi ujian langsung ke Google Drive & Google Sheets menggunakan <strong>Google Apps Script Web App (`DriveApp` & `SpreadsheetApp`)</strong> tanpa ketergantungan Firebase.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {!hasToken ? (
-            <button
-              type="button"
-              onClick={onGoogleLogin}
-              disabled={isLoggingIn}
-              className="gsi-material-button"
-            >
-              <div className="gsi-material-button-state"></div>
-              <div className="gsi-material-button-content-wrapper">
-                <div className="gsi-material-button-icon">
-                  <svg
-                    version="1.1"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 48 48"
-                    style={{ display: 'block' }}
-                  >
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    ></path>
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    ></path>
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    ></path>
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    ></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                </div>
-                <span className="gsi-material-button-contents">
-                  {isLoggingIn ? 'Menghubungkan...' : 'Sign in with Google'}
-                </span>
-              </div>
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onSyncWithConfirmation}
-                disabled={isSyncing}
-                className="px-4 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
-                />
-                <span>
-                  {isSyncing
-                    ? 'Menyinkronkan ke UjianOnline_Database...'
-                    : 'Sinkronkan Semua Data ke Google Sheets'}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={onGoogleLogout}
-                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Putuskan Sesi</span>
-              </button>
-            </>
-          )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowGasCode((prev) => !prev)}
+            className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <Code2 className="w-3.5 h-3.5 text-sky-700" />
+            <span>{showGasCode ? 'Sembunyikan Kode Apps Script' : 'Lihat Kode Google Apps Script (Code.gs)'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onSyncWithConfirmation}
+            disabled={isSyncing}
+            className="px-4 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-60 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
+            />
+            <span>
+              {isSyncing
+                ? 'Menyinkronkan via Apps Script...'
+                : 'Sinkronkan ke Google Sheets (GAS)'}
+            </span>
+          </button>
         </div>
       </div>
 
-      {syncError && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
-          <strong>Pemberitahuan Sinkronisasi:</strong> {syncError}
+      {/* Google Apps Script Web App URL Configuration Panel */}
+      <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-sky-700" />
+              <span>Konfigurasi Endpoint Web App Google Apps Script</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Masukkan URL deployment Web App Google Apps Script Anda (<code className="font-mono">https://script.google.com/macros/s/.../exec</code>) untuk sinkronisasi otomatis ke folder <strong>UjianOnline_Database</strong>.
+            </p>
+          </div>
+          <span className="text-xs font-mono font-semibold text-slate-700">
+            {isUrlConfigured
+              ? '● Endpoint Web App Aktif'
+              : dbInfo
+              ? '● Tersinkronisasi'
+              : 'Menunggu URL / Simulasi'}
+          </span>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <input
+            type="url"
+            value={gasWebAppUrl}
+            onChange={(e) => onUpdateGasWebAppUrl(e.target.value)}
+            placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+            className="flex-1 px-3.5 py-2.5 text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-sky-700"
+          />
+
+          <button
+            type="button"
+            onClick={onSyncWithConfirmation}
+            disabled={isSyncing}
+            className="px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap"
+          >
+            {isUrlConfigured ? 'Kirim Data ke Web App URL' : 'Uji Sinkronisasi GAS'}
+          </button>
+
+          {!isUrlConfigured && (
+            <button
+              type="button"
+              onClick={onSimulateLocalGasSync}
+              disabled={isSyncing}
+              className="px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap"
+              title="Simulasikan eksekusi fungsi ensureDatabaseInDrive() dari Google Apps Script"
+            >
+              Simulasi Eksekusi Apps Script
+            </button>
+          )}
+        </div>
+
+        {syncError && (
+          <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <strong>Pemberitahuan Google Apps Script:</strong> {syncError}
+          </div>
+        )}
+      </div>
+
+      {/* Expandable Google Apps Script (Code.gs) Source Code & Deployment Instructions */}
+      {showGasCode && (
+        <div className="bg-slate-900 text-slate-100 border border-slate-800 rounded-xl overflow-hidden">
+          <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-mono text-sky-400">
+                Code.gs · Google Apps Script (DriveApp & SpreadsheetApp)
+              </div>
+              <h3 className="text-sm font-semibold text-white mt-0.5">
+                Skrip Otomatis Pembuat Folder &ldquo;UjianOnline_Database&rdquo; & 4 Lembar Kerja Sheets
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={handleCopyGasCode}
+              className="px-3.5 py-1.5 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center gap-1.5 transition-colors"
+            >
+              {copiedCode ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Kode Berhasil Disalin!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Salin Kode Code.gs</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs text-slate-300 bg-slate-800/70 p-4 rounded-lg border border-slate-700">
+              <div>
+                <strong className="text-white block mb-0.5">1. Buka Apps Script</strong>
+                Kunjungi <code className="text-sky-300 font-mono">script.google.com</code> dan buat proyek baru.
+              </div>
+              <div>
+                <strong className="text-white block mb-0.5">2. Tempel Code.gs</strong>
+                Salin kode di bawah ini ke editor <code className="text-sky-300 font-mono">Code.gs</code> lalu simpan.
+              </div>
+              <div>
+                <strong className="text-white block mb-0.5">3. Deploy Web App</strong>
+                Klik <em>Deploy &gt; New deployment &gt; Web app</em> (Execute as: <em>Me</em>, Access: <em>Anyone</em>).
+              </div>
+              <div>
+                <strong className="text-white block mb-0.5">4. Tempel URL</strong>
+                Tempel URL <code className="text-sky-300 font-mono">.../exec</code> ke kolom input di atas lalu klik Sinkronkan.
+              </div>
+            </div>
+
+            <pre className="text-xs font-mono text-slate-200 bg-slate-950 p-4 rounded-lg overflow-x-auto max-h-96 leading-relaxed border border-slate-800">
+              {GOOGLE_APPS_SCRIPT_CODE}
+            </pre>
+          </div>
         </div>
       )}
 
       {/* Connection & Folder Architecture Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2">
-          <div className="text-xs text-slate-500">Status Koneksi Google Workspace</div>
+          <div className="text-xs text-slate-500">Status Mesin Google Apps Script</div>
           <div className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-            {hasToken ? (
+            {isUrlConfigured || dbInfo ? (
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Terhubung ({userEmail || 'Akun Guru'})</span>
+                <span>
+                  {isUrlConfigured
+                    ? 'Terhubung ke Web App GAS'
+                    : 'Mode Apps Script Siap'}
+                </span>
               </>
             ) : (
               <span className="text-amber-700">
-                ▲ Menunggu Otorisasi Google Drive & Sheets
+                ▲ Siap Dikonfigurasi (Tanpa Firebase)
               </span>
             )}
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Saat terhubung, setiap pengumpulan ujian baru otomatis diperbarui ke lembar kerja Google Sheets Anda.
+            Menggunakan <code className="font-mono">doPost(e)</code> & <code className="font-mono">DriveApp</code> untuk otomatis mengirim nilai ujian ke Google Sheets.
           </p>
         </div>
 
@@ -188,7 +280,7 @@ export const SheetsDatabaseView: React.FC<SheetsDatabaseViewProps> = ({
             </div>
           ) : (
             <p className="text-xs text-slate-500">
-              Folder akan dibuat otomatis di Google Drive pada saat sinkronisasi pertama.
+              Otomatis dibuat oleh <code className="font-mono">DriveApp.createFolder(&apos;UjianOnline_Database&apos;)</code>.
             </p>
           )}
         </div>
@@ -235,32 +327,45 @@ export const SheetsDatabaseView: React.FC<SheetsDatabaseViewProps> = ({
               Pratinjau Struktur Tabel Google Sheets (UjianOnline_Database)
             </h2>
             <p className="text-xs text-slate-500">
-              Menampilkan struktur baris dan kolom real-time yang disinkronkan ke dalam file Google Sheets Anda.
+              Menampilkan struktur baris dan kolom real-time yang dikirim ke Google Sheets melalui Google Apps Script.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-200/70 rounded-lg">
-            {(
-              [
-                'Hasil_Ujian',
-                'Data_Siswa',
-                'Bank_Soal',
-                'Riwayat_Partisipasi',
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveSheetTab(tab)}
-                className={`px-3 py-1.5 text-xs font-mono font-medium rounded-md transition-colors whitespace-nowrap ${
-                  activeSheetTab === tab
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-200/70 rounded-lg">
+              {(
+                [
+                  'Hasil_Ujian',
+                  'Data_Siswa',
+                  'Bank_Soal',
+                  'Riwayat_Partisipasi',
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveSheetTab(tab)}
+                  className={`px-3 py-1.5 text-xs font-mono font-medium rounded-md transition-colors whitespace-nowrap ${
+                    activeSheetTab === tab
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                exportTabAsCsv(activeSheetTab, students, questions, submissions)
+              }
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Unduh CSV ({activeSheetTab})</span>
+            </button>
           </div>
         </div>
 
@@ -302,7 +407,9 @@ export const SheetsDatabaseView: React.FC<SheetsDatabaseViewProps> = ({
                     <td className="py-2.5 px-3">
                       <span
                         className={
-                          s.passed ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'
+                          s.passed
+                            ? 'text-emerald-700 font-semibold'
+                            : 'text-amber-700 font-semibold'
                         }
                       >
                         {s.passed ? 'LULUS' : 'REMEDIAL'}

@@ -16,20 +16,16 @@ interface LoginPortalViewProps {
   students: Student[];
   teacherPassword: string;
   isDefaultPassword: boolean;
-  isLoggingInGoogle: boolean;
   onLogin: (session: UserSession, newStudentIfCreated?: Student) => void;
   onUpdateTeacherPassword: (newPassword: string) => void;
-  onGoogleLoginAsTeacher: () => void;
 }
 
 export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
   students,
   teacherPassword,
   isDefaultPassword,
-  isLoggingInGoogle,
   onLogin,
   onUpdateTeacherPassword,
-  onGoogleLoginAsTeacher,
 }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('siswa');
 
