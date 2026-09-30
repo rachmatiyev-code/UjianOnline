@@ -5,34 +5,45 @@ import {
   WorkspaceDatabaseInfo,
 } from '../types/exam';
 
+export type DatabaseTabName =
+  | 'Hasil_Ujian'
+  | 'Data_Siswa'
+  | 'Bank_Soal'
+  | 'Riwayat_Partisipasi';
+
 export const FOLDER_NAME = 'UjianOnline_Database';
 export const SPREADSHEET_TITLE = 'UjianOnline_Master_Database';
 
-export const TAB_NAMES = {
+export const TAB_NAMES: Record<string, DatabaseTabName> = {
   RESULTS: 'Hasil_Ujian',
   STUDENTS: 'Data_Siswa',
   QUESTIONS: 'Bank_Soal',
   HISTORY: 'Riwayat_Partisipasi',
 };
 
+export interface DatabaseSnapshot {
+  students: Student[];
+  questions: Question[];
+  submissions: ExamSubmission[];
+  updatedAt: string;
+}
+
 /**
  * Complete Google Apps Script (Code.gs) template.
  * Uses native DriveApp & SpreadsheetApp (Zero Firebase dependency) to automatically:
  * 1. Find or create folder "UjianOnline_Database" in Google Drive.
  * 2. Find or create spreadsheet "UjianOnline_Master_Database" inside that folder.
- * 3. Create and populate 4 structured tabs: Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi.
- * 4. Expose doPost(e) and doGet(e) Web App endpoints for real-time two-way sync.
+ * 3. Create, sync (write), and fetch (read) 4 structured tabs:
+ *    Hasil_Ujian, Data_Siswa, Bank_Soal, Riwayat_Partisipasi.
  */
 export const GOOGLE_APPS_SCRIPT_CODE = `/**
  * UjianOnline — Google Apps Script Backend (Code.gs)
  * Tanpa Firebase — Menggunakan DriveApp & SpreadsheetApp Bawaan Google
- *
- * Cara Penggunaan:
- * 1. Buka https://script.google.com dan buat proyek baru.
- * 2. Tempel seluruh kode ini ke dalam file Code.gs lalu simpan.
- * 3. Klik "Deploy" > "New deployment" > Pilih jenis "Web app".
- * 4. Execute as: "Me" | Who has access: "Anyone".
- * 5. Salin Web App URL (https://script.google.com/macros/s/.../exec) ke aplikasi UjianOnline.
+ * Mendukung Sinkronisasi (Simpan) & Ambil Data (Fetch) untuk 4 Tabel:
+ * 1. Hasil_Ujian
+ * 2. Data_Siswa
+ * 3. Bank_Soal
+ * 4. Riwayat_Partisipasi
  */
 
 const FOLDER_NAME = 'UjianOnline_Database';
@@ -40,7 +51,6 @@ const SPREADSHEET_TITLE = 'UjianOnline_Master_Database';
 const TABS = ['Hasil_Ujian', 'Data_Siswa', 'Bank_Soal', 'Riwayat_Partisipasi'];
 
 function ensureDatabaseInDrive() {
-  // 1. Cari atau buat folder khusus "UjianOnline_Database"
   let folder;
   const folders = DriveApp.getFoldersByName(FOLDER_NAME);
   if (folders.hasNext()) {
@@ -49,7 +59,6 @@ function ensureDatabaseInDrive() {
     folder = DriveApp.createFolder(FOLDER_NAME);
   }
 
-  // 2. Cari atau buat spreadsheet di dalam folder "UjianOnline_Database"
   let spreadsheet;
   const files = folder.getFilesByName(SPREADSHEET_TITLE);
   if (files.hasNext()) {
@@ -61,7 +70,6 @@ function ensureDatabaseInDrive() {
     ssFile.moveTo(folder);
   }
 
-  // 3. Pastikan 4 lembar kerja (tab) tersedia
   const existingSheets = spreadsheet.getSheets();
   if (existingSheets.length === 1 && existingSheets[0].getName() !== TABS[0]) {
     existingSheets[0].setName(TABS[0]);
@@ -95,11 +103,20 @@ function writeSheetData(sheet, header, rows) {
   }
 }
 
+function readSheetRows(sheet) {
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= 1 || lastCol === 0) return [];
+  return sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+}
+
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
     const db = ensureDatabaseInDrive();
     const ss = db.spreadsheet;
+    const props = PropertiesService.getScriptProperties();
 
     if (payload.action === 'syncAll') {
       writeSheetData(
@@ -122,6 +139,60 @@ function doPost(e) {
         payload.tables.historyHeader,
         payload.tables.historyRows
       );
+
+      if (payload.rawModels) {
+        if (payload.rawModels.submissions) {
+          props.setProperty('MODEL_Hasil_Ujian', JSON.stringify(payload.rawModels.submissions));
+          props.setProperty('MODEL_Riwayat_Partisipasi', JSON.stringify(payload.rawModels.submissions));
+        }
+        if (payload.rawModels.students) {
+          props.setProperty('MODEL_Data_Siswa', JSON.stringify(payload.rawModels.students));
+        }
+        if (payload.rawModels.questions) {
+          props.setProperty('MODEL_Bank_Soal', JSON.stringify(payload.rawModels.questions));
+        }
+      }
+    }
+
+    if (payload.action === 'fetchData') {
+      const targetTab = payload.tab || 'ALL';
+      const resultData = {};
+
+      if (targetTab === 'Hasil_Ujian' || targetTab === 'ALL') {
+        const saved = props.getProperty('MODEL_Hasil_Ujian');
+        resultData.Hasil_Ujian = saved ? JSON.parse(saved) : null;
+        resultData.Hasil_Ujian_Rows = readSheetRows(ss.getSheetByName('Hasil_Ujian'));
+      }
+      if (targetTab === 'Data_Siswa' || targetTab === 'ALL') {
+        const saved = props.getProperty('MODEL_Data_Siswa');
+        resultData.Data_Siswa = saved ? JSON.parse(saved) : null;
+        resultData.Data_Siswa_Rows = readSheetRows(ss.getSheetByName('Data_Siswa'));
+      }
+      if (targetTab === 'Bank_Soal' || targetTab === 'ALL') {
+        const saved = props.getProperty('MODEL_Bank_Soal');
+        resultData.Bank_Soal = saved ? JSON.parse(saved) : null;
+        resultData.Bank_Soal_Rows = readSheetRows(ss.getSheetByName('Bank_Soal'));
+      }
+      if (targetTab === 'Riwayat_Partisipasi' || targetTab === 'ALL') {
+        const saved = props.getProperty('MODEL_Riwayat_Partisipasi');
+        resultData.Riwayat_Partisipasi = saved ? JSON.parse(saved) : null;
+        resultData.Riwayat_Partisipasi_Rows = readSheetRows(ss.getSheetByName('Riwayat_Partisipasi'));
+      }
+
+      return ContentService.createTextOutput(
+        JSON.stringify({
+          status: 'success',
+          tab: targetTab,
+          data: resultData,
+          folderId: db.folderId,
+          folderName: db.folderName,
+          folderUrl: db.folderUrl,
+          spreadsheetId: db.spreadsheetId,
+          spreadsheetTitle: db.spreadsheetTitle,
+          spreadsheetUrl: db.spreadsheetUrl,
+          fetchedAt: new Date().toISOString()
+        })
+      ).setMimeType(ContentService.MimeType.JSON);
     }
 
     return ContentService.createTextOutput(
@@ -149,9 +220,20 @@ function doPost(e) {
 function doGet(e) {
   try {
     const db = ensureDatabaseInDrive();
+    const ss = db.spreadsheet;
+    const tab = (e && e.parameter && e.parameter.tab) ? e.parameter.tab : 'ALL';
+    const rows = {};
+    TABS.forEach(function(t) {
+      if (tab === 'ALL' || tab === t) {
+        rows[t] = readSheetRows(ss.getSheetByName(t));
+      }
+    });
+
     return ContentService.createTextOutput(
       JSON.stringify({
         status: 'success',
+        tab: tab,
+        rows: rows,
         folderId: db.folderId,
         folderName: db.folderName,
         folderUrl: db.folderUrl,
@@ -355,7 +437,6 @@ export async function syncDataViaGoogleAppsScript(
   const response = await fetch(trimmedUrl, {
     method: 'POST',
     headers: {
-      // text/plain prevents browser CORS preflight OPTIONS failure on Google Apps Script endpoints
       'Content-Type': 'text/plain;charset=utf-8',
     },
     body: JSON.stringify({
@@ -363,6 +444,11 @@ export async function syncDataViaGoogleAppsScript(
       folderName: FOLDER_NAME,
       spreadsheetTitle: SPREADSHEET_TITLE,
       tables,
+      rawModels: {
+        students,
+        questions,
+        submissions,
+      },
     }),
   });
 
@@ -389,8 +475,253 @@ export async function syncDataViaGoogleAppsScript(
   };
 }
 
+/**
+ * Parses raw spreadsheet rows from Google Sheets back into typed models
+ * if structured JSON properties aren't present yet (e.g. rows edited directly in Sheets).
+ */
+function parseStudentsFromRows(rows: any[][]): Student[] {
+  return rows
+    .filter((r) => r && r.length >= 4 && String(r[2] || '').trim() !== '')
+    .map((r, idx) => ({
+      id: String(r[0] || `SIS-DB-${idx + 1}`),
+      nisn: String(r[1] || `008000${idx + 1}`),
+      name: String(r[2] || 'Siswa'),
+      className: String(r[3] || 'XII MIPA 1'),
+      email: String(r[4] || 'siswa@sekolah.sch.id'),
+      status: String(r[5]) === 'Nonaktif' ? 'Nonaktif' : 'Aktif',
+      joinedAt: String(r[6] || new Date().toISOString().slice(0, 10)),
+    }));
+}
+
+function parseQuestionsFromRows(rows: any[][]): Question[] {
+  return rows
+    .filter((r) => r && r.length >= 7 && String(r[6] || '').trim() !== '')
+    .map((r, idx) => {
+      const rawOptions = String(r[7] || 'A: Opsi A | B: Opsi B | C: Opsi C | D: Opsi D');
+      const options = rawOptions
+        .split('|')
+        .map((part) => {
+          const [idPart, ...labelParts] = part.trim().split(':');
+          return {
+            id: (idPart || 'A').trim(),
+            label: labelParts.join(':').trim() || (idPart || 'Opsi').trim(),
+          };
+        })
+        .filter((o) => o.id);
+
+      const rawCorrect = String(r[8] || 'A')
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+      return {
+        id: String(r[0] || `SOAL-DB-${idx + 1}`),
+        topic: String(r[1] || 'Umum'),
+        type: (['multiple_choice', 'checkboxes', 'true_false', 'short_answer'].includes(
+          String(r[2])
+        )
+          ? String(r[2])
+          : 'multiple_choice') as Question['type'],
+        difficulty: (['Mudah', 'Sedang', 'Sulit'].includes(String(r[3]))
+          ? String(r[3])
+          : 'Sedang') as Question['difficulty'],
+        points: Number(r[4]) || 10,
+        mediaType: (['none', 'image', 'audio', 'video', 'formula'].includes(
+          String(r[5])
+        )
+          ? String(r[5])
+          : 'none') as Question['mediaType'],
+        text: String(r[6] || ''),
+        options: options.length > 0 ? options : [{ id: 'A', label: 'Pilihan A' }],
+        correctAnswers: rawCorrect.length > 0 ? rawCorrect : ['A'],
+        explanation: String(r[9] || 'Pembahasan diambil dari database Google Sheets.'),
+        createdAt: new Date().toISOString(),
+      };
+    });
+}
+
+function parseSubmissionsFromResultRows(
+  rows: any[][],
+  fallbackSubmissions: ExamSubmission[]
+): ExamSubmission[] {
+  return rows
+    .filter((r) => r && r.length >= 4 && String(r[3] || '').trim() !== '')
+    .map((r, idx) => {
+      const id = String(r[0] || `SUB-DB-${idx + 1}`);
+      const existing = fallbackSubmissions.find((s) => s.id === id);
+      const totalScore = Number(r[6]) || existing?.totalScore || 80;
+      const maxScore = Number(r[7]) || existing?.maxScore || 100;
+      const pctRaw = String(r[8] || '').replace('%', '').trim();
+      const percentage =
+        Number(pctRaw) ||
+        (maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 80);
+      const gradeLetter = (['A', 'B', 'C', 'D', 'E'].includes(String(r[9]))
+        ? String(r[9])
+        : percentage >= 85
+        ? 'A'
+        : percentage >= 75
+        ? 'B'
+        : percentage >= 60
+        ? 'C'
+        : percentage >= 45
+        ? 'D'
+        : 'E') as ExamSubmission['gradeLetter'];
+      const passed =
+        String(r[10] || '').toUpperCase().includes('LULUS') || percentage >= 75;
+
+      return {
+        id,
+        studentId: existing?.studentId || `SIS-${idx + 1}`,
+        studentNisn: String(r[2] || existing?.studentNisn || '0084192831'),
+        studentName: String(r[3] || existing?.studentName || 'Siswa Peserta'),
+        className: String(r[4] || existing?.className || 'XII MIPA 1'),
+        examTitle: String(r[5] || existing?.examTitle || 'Ujian Evaluasi'),
+        startedAt: existing?.startedAt || new Date().toISOString(),
+        submittedAt: existing?.submittedAt || new Date().toISOString(),
+        durationSeconds: Number(r[11]) || existing?.durationSeconds || 900,
+        totalScore,
+        maxScore,
+        percentage,
+        gradeLetter,
+        passed,
+        randomizedQuestions: existing?.randomizedQuestions ?? true,
+        randomizedOptions: existing?.randomizedOptions ?? true,
+        details: existing?.details || [],
+        syncedToSheets: true,
+      };
+    });
+}
+
+/**
+ * Fetches data for a specific tab ('Hasil_Ujian' | 'Data_Siswa' | 'Bank_Soal' | 'Riwayat_Partisipasi' | 'ALL')
+ * from Google Apps Script Web App or from the synced database snapshot.
+ */
+export async function fetchFromDatabaseViaGas(
+  gasWebAppUrl: string,
+  targetTab: DatabaseTabName | 'ALL',
+  snapshot: DatabaseSnapshot
+): Promise<{
+  students?: Student[];
+  questions?: Question[];
+  submissions?: ExamSubmission[];
+  dbInfo?: WorkspaceDatabaseInfo;
+  source: 'gas_remote' | 'database_snapshot';
+}> {
+  const trimmedUrl = gasWebAppUrl.trim();
+
+  if (trimmedUrl.startsWith('https://script.google.com/')) {
+    const response = await fetch(trimmedUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        action: 'fetchData',
+        tab: targetTab,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Gagal mengambil data dari Google Apps Script (${response.status}). Pastikan Web App di-deploy dengan akses "Anyone".`
+      );
+    }
+
+    const resJson = await response.json();
+    if (resJson.status === 'error') {
+      throw new Error(`Google Apps Script Error: ${resJson.message}`);
+    }
+
+    const d = resJson.data || {};
+    const out: {
+      students?: Student[];
+      questions?: Question[];
+      submissions?: ExamSubmission[];
+      dbInfo?: WorkspaceDatabaseInfo;
+      source: 'gas_remote';
+    } = {
+      source: 'gas_remote',
+      dbInfo: {
+        gasWebAppUrl: trimmedUrl,
+        folderId: resJson.folderId || 'GAS-FOLDER-ID',
+        folderName: resJson.folderName || FOLDER_NAME,
+        folderUrl: resJson.folderUrl || 'https://drive.google.com/drive/my-drive',
+        spreadsheetId: resJson.spreadsheetId || 'GAS-SHEET-ID',
+        spreadsheetTitle: resJson.spreadsheetTitle || SPREADSHEET_TITLE,
+        spreadsheetUrl:
+          resJson.spreadsheetUrl || 'https://docs.google.com/spreadsheets',
+        lastSyncedAt: resJson.fetchedAt || new Date().toISOString(),
+      },
+    };
+
+    if (targetTab === 'Data_Siswa' || targetTab === 'ALL') {
+      if (Array.isArray(d.Data_Siswa) && d.Data_Siswa.length > 0) {
+        out.students = d.Data_Siswa;
+      } else if (Array.isArray(d.Data_Siswa_Rows) && d.Data_Siswa_Rows.length > 0) {
+        out.students = parseStudentsFromRows(d.Data_Siswa_Rows);
+      } else {
+        out.students = snapshot.students;
+      }
+    }
+
+    if (targetTab === 'Bank_Soal' || targetTab === 'ALL') {
+      if (Array.isArray(d.Bank_Soal) && d.Bank_Soal.length > 0) {
+        out.questions = d.Bank_Soal;
+      } else if (Array.isArray(d.Bank_Soal_Rows) && d.Bank_Soal_Rows.length > 0) {
+        out.questions = parseQuestionsFromRows(d.Bank_Soal_Rows);
+      } else {
+        out.questions = snapshot.questions;
+      }
+    }
+
+    if (
+      targetTab === 'Hasil_Ujian' ||
+      targetTab === 'Riwayat_Partisipasi' ||
+      targetTab === 'ALL'
+    ) {
+      const modelList =
+        targetTab === 'Riwayat_Partisipasi'
+          ? d.Riwayat_Partisipasi || d.Hasil_Ujian
+          : d.Hasil_Ujian || d.Riwayat_Partisipasi;
+      const rowList = d.Hasil_Ujian_Rows || d.Riwayat_Partisipasi_Rows;
+
+      if (Array.isArray(modelList) && modelList.length > 0) {
+        out.submissions = modelList;
+      } else if (Array.isArray(rowList) && rowList.length > 0) {
+        out.submissions = parseSubmissionsFromResultRows(
+          rowList,
+          snapshot.submissions
+        );
+      } else {
+        out.submissions = snapshot.submissions;
+      }
+    }
+
+    return out;
+  }
+
+  // Fallback to UjianOnline_Database snapshot when running in local/simulated GAS mode
+  return {
+    source: 'database_snapshot',
+    students:
+      targetTab === 'Data_Siswa' || targetTab === 'ALL'
+        ? snapshot.students
+        : undefined,
+    questions:
+      targetTab === 'Bank_Soal' || targetTab === 'ALL'
+        ? snapshot.questions
+        : undefined,
+    submissions:
+      targetTab === 'Hasil_Ujian' ||
+      targetTab === 'Riwayat_Partisipasi' ||
+      targetTab === 'ALL'
+        ? snapshot.submissions.map((s) => ({ ...s, syncedToSheets: true }))
+        : undefined,
+  };
+}
+
 export function exportTabAsCsv(
-  tabName: 'Hasil_Ujian' | 'Data_Siswa' | 'Bank_Soal' | 'Riwayat_Partisipasi',
+  tabName: DatabaseTabName,
   students: Student[],
   questions: Question[],
   submissions: ExamSubmission[]

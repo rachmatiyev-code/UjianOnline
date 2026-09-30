@@ -11,6 +11,7 @@ import {
   Shuffle,
   X,
   Image as ImageIcon,
+  CloudDownload,
 } from 'lucide-react';
 import {
   Question,
@@ -19,6 +20,7 @@ import {
   DifficultyLevel,
   ExamConfig,
 } from '../types/exam';
+import { DatabaseTabName } from '../services/workspaceService';
 import { MediaRenderer } from './MediaRenderer';
 import diagramSelBiologi from '../assets/images/diagram_sel_biologi_1790692867331.jpg';
 import grafikFisikaKinematika from '../assets/images/grafik_fisika_kinematika_1790692882983.jpg';
@@ -26,6 +28,8 @@ import grafikFisikaKinematika from '../assets/images/grafik_fisika_kinematika_17
 interface QuestionBankViewProps {
   questions: Question[];
   examConfig: ExamConfig;
+  isFetchingTab: DatabaseTabName | 'ALL' | null;
+  onFetchFromDatabase: (tab: DatabaseTabName | 'ALL') => void;
   onUpdateExamConfig: (next: ExamConfig) => void;
   onAddQuestion: (q: Question) => void;
   onUpdateQuestion: (q: Question) => void;
@@ -40,6 +44,8 @@ interface QuestionBankViewProps {
 export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
   questions,
   examConfig,
+  isFetchingTab,
+  onFetchFromDatabase,
   onUpdateExamConfig,
   onAddQuestion,
   onUpdateQuestion,
@@ -189,6 +195,23 @@ export const QuestionBankView: React.FC<QuestionBankViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => onFetchFromDatabase('Bank_Soal')}
+            disabled={isFetchingTab !== null}
+            className="px-3.5 py-2 text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-200 hover:bg-sky-100 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <CloudDownload
+              className={`w-3.5 h-3.5 text-sky-700 ${
+                isFetchingTab === 'Bank_Soal' ? 'animate-bounce' : ''
+              }`}
+            />
+            <span>
+              {isFetchingTab === 'Bank_Soal'
+                ? 'Mengambil...'
+                : 'Ambil Bank Soal dari DB'}
+            </span>
+          </button>
           <button
             type="button"
             onClick={onOpenImportModal}

@@ -15,6 +15,9 @@ import {
 } from './types/exam';
 import {
   syncDataViaGoogleAppsScript,
+  fetchFromDatabaseViaGas,
+  DatabaseTabName,
+  DatabaseSnapshot,
   FOLDER_NAME,
   SPREADSHEET_TITLE,
 } from './services/workspaceService';
@@ -42,6 +45,7 @@ const STORAGE_KEYS = {
   SESSION: 'ujianonline_rbac_session_v1',
   TEACHER_PASSWORD: 'ujianonline_teacher_password_v1',
   GAS_WEB_APP_URL: 'ujianonline_gas_webapp_url_v1',
+  DATABASE_SNAPSHOT: 'ujianonline_db_snapshot_v1',
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -96,7 +100,19 @@ export default function App() {
   const [gasWebAppUrl, setGasWebAppUrl] = useState<string>(() =>
     loadFromStorage(STORAGE_KEYS.GAS_WEB_APP_URL, '')
   );
+  const [databaseSnapshot, setDatabaseSnapshot] = useState<DatabaseSnapshot>(
+    () =>
+      loadFromStorage<DatabaseSnapshot>(STORAGE_KEYS.DATABASE_SNAPSHOT, {
+        students: INITIAL_STUDENTS,
+        questions: INITIAL_QUESTIONS,
+        submissions: INITIAL_SUBMISSIONS,
+        updatedAt: new Date().toISOString(),
+      })
+  );
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isFetchingTab, setIsFetchingTab] = useState<
+    DatabaseTabName | 'ALL' | null
+  >(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -195,6 +211,17 @@ export default function App() {
       // ignore
     }
   }, [gasWebAppUrl]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.DATABASE_SNAPSHOT,
+        JSON.stringify(databaseSnapshot)
+      );
+    } catch {
+      // ignore
+    }
+  }, [databaseSnapshot]);
 
   // Enforce RBAC navigation lock: Siswa can ONLY stay on 'exam' (Ruang Ujian)
   useEffect(() => {
@@ -331,15 +358,23 @@ export default function App() {
         lastSyncedAt: new Date().toISOString(),
       };
       setDbInfo(simulatedDb);
-      setSubmissions((prev) =>
-        prev.map((s) => ({ ...s, syncedToSheets: true }))
-      );
+      const syncedSubs = submissions.map((s) => ({
+        ...s,
+        syncedToSheets: true,
+      }));
+      setSubmissions(syncedSubs);
+      setDatabaseSnapshot({
+        students,
+        questions,
+        submissions: syncedSubs,
+        updatedAt: new Date().toISOString(),
+      });
       setIsSyncing(false);
       showToast(
         'Google Apps Script (DriveApp & SpreadsheetApp) berhasil menyinkronkan 4 lembar kerja di folder UjianOnline_Database.'
       );
-    }, 600);
-  }, [gasWebAppUrl, showToast]);
+    }, 500);
+  }, [gasWebAppUrl, students, questions, submissions, showToast]);
 
   const executeGoogleAppsScriptSync = useCallback(
     async (
@@ -361,10 +396,18 @@ export default function App() {
           nextQuestions,
           nextSubmissions
         );
+        const syncedSubs = nextSubmissions.map((s) => ({
+          ...s,
+          syncedToSheets: true,
+        }));
         setDbInfo(updatedDb);
-        setSubmissions((prev) =>
-          prev.map((s) => ({ ...s, syncedToSheets: true }))
-        );
+        setSubmissions(syncedSubs);
+        setDatabaseSnapshot({
+          students: nextStudents,
+          questions: nextQuestions,
+          submissions: syncedSubs,
+          updatedAt: new Date().toISOString(),
+        });
         showToast(
           'Berhasil menyinkronkan data ke Google Sheets via Google Apps Script (folder UjianOnline_Database).'
         );
@@ -379,6 +422,78 @@ export default function App() {
       }
     },
     [gasWebAppUrl, handleSimulateLocalGasSync, showToast]
+  );
+
+  const handleFetchFromDatabase = useCallback(
+    async (targetTab: DatabaseTabName | 'ALL') => {
+      setIsFetchingTab(targetTab);
+      setSyncError(null);
+      try {
+        const result = await fetchFromDatabaseViaGas(
+          gasWebAppUrl,
+          targetTab,
+          databaseSnapshot
+        );
+
+        if (result.dbInfo) {
+          setDbInfo(result.dbInfo);
+        }
+
+        if (targetTab === 'Data_Siswa' && result.students) {
+          setStudents(result.students);
+          showToast(
+            `Berhasil mengambil ${result.students.length} Data Siswa dari database (${
+              result.source === 'gas_remote'
+                ? 'Google Sheets GAS'
+                : 'UjianOnline_Database'
+            }).`
+          );
+        } else if (targetTab === 'Bank_Soal' && result.questions) {
+          setQuestions(result.questions);
+          showToast(
+            `Berhasil mengambil ${result.questions.length} butir Bank Soal dari database (${
+              result.source === 'gas_remote'
+                ? 'Google Sheets GAS'
+                : 'UjianOnline_Database'
+            }).`
+          );
+        } else if (targetTab === 'Hasil_Ujian' && result.submissions) {
+          setSubmissions(result.submissions);
+          showToast(
+            `Berhasil mengambil ${result.submissions.length} Hasil Ujian dari database (${
+              result.source === 'gas_remote'
+                ? 'Google Sheets GAS'
+                : 'UjianOnline_Database'
+            }).`
+          );
+        } else if (targetTab === 'Riwayat_Partisipasi' && result.submissions) {
+          setSubmissions(result.submissions);
+          showToast(
+            `Berhasil mengambil ${result.submissions.length} Riwayat Partisipasi dari database (${
+              result.source === 'gas_remote'
+                ? 'Google Sheets GAS'
+                : 'UjianOnline_Database'
+            }).`
+          );
+        } else if (targetTab === 'ALL') {
+          if (result.students) setStudents(result.students);
+          if (result.questions) setQuestions(result.questions);
+          if (result.submissions) setSubmissions(result.submissions);
+          showToast(
+            `Berhasil mengambil seluruh 4 tabel (Hasil Ujian, Data Siswa, Bank Soal, Riwayat Partisipasi) dari database.`
+          );
+        }
+      } catch (err: any) {
+        console.error('Fetch from DB error:', err);
+        setSyncError(
+          err?.message ||
+            'Gagal mengambil data dari Google Apps Script. Pastikan URL Web App benar.'
+        );
+      } finally {
+        setIsFetchingTab(null);
+      }
+    },
+    [gasWebAppUrl, databaseSnapshot, showToast]
   );
 
   // Mandatory User Confirmation before mutating/overwriting Google Sheets data via GAS
@@ -532,17 +647,46 @@ export default function App() {
     showToast(`${ids.length} data siswa berhasil diperbarui secara massal.`);
   };
 
-  const handleDeleteSubmission = (sub: ExamSubmission) => {
+  // Submissions & Participation History Local CRUD (Pilih, Edit, Hapus Data Lokal)
+  const handleUpdateSubmission = (updated: ExamSubmission) => {
+    setSubmissions((prev) =>
+      prev.map((s) => (s.id === updated.id ? updated : s))
+    );
+    showToast(
+      `Data lokal hasil/riwayat ujian ${updated.studentName} (${updated.id}) berhasil diperbarui.`
+    );
+  };
+
+  const handleBulkUpdateSubmissions = (
+    ids: string[],
+    patch: { className?: string; passed?: boolean }
+  ) => {
+    setSubmissions((prev) =>
+      prev.map((s) => (ids.includes(s.id) ? { ...s, ...patch } : s))
+    );
+    showToast(
+      `${ids.length} data lokal hasil & riwayat ujian berhasil diperbarui secara massal.`
+    );
+  };
+
+  const handleDeleteSubmissions = (ids: string[]) => {
+    const affected = submissions
+      .filter((s) => ids.includes(s.id))
+      .map(
+        (s) => `${s.id} · ${s.studentName} (${s.className}) · Nilai ${s.percentage}%`
+      );
+
     setConfirmDialog({
       isOpen: true,
-      title: 'Hapus Laporan Nilai Ujian?',
-      description: `Apakah Anda yakin ingin menghapus riwayat nilai ujian milik ${sub.studentName} (${sub.percentage}%) dari daftar laporan?`,
-      AffectedItems: [`${sub.id} · ${sub.studentName} · Skor ${sub.percentage}%`],
-      confirmLabel: 'Hapus Laporan',
+      title: `Hapus ${ids.length} Data Lokal Hasil & Riwayat Ujian?`,
+      description:
+        'Menghapus data lokal ini akan menghilangkannya dari daftar Hasil Ujian dan Riwayat Partisipasi lokal. Anda tetap dapat memulihkannya dari database jika sudah disinkronkan.',
+      AffectedItems: affected,
+      confirmLabel: 'Hapus Data Lokal',
       variant: 'danger',
       onConfirm: () => {
-        setSubmissions((prev) => prev.filter((s) => s.id !== sub.id));
-        showToast(`Laporan nilai ${sub.id} telah dihapus.`);
+        setSubmissions((prev) => prev.filter((s) => !ids.includes(s.id)));
+        showToast(`${ids.length} data lokal hasil & riwayat ujian telah dihapus.`);
       },
     });
   };
@@ -788,9 +932,13 @@ export default function App() {
                 examConfig={examConfig}
                 dbInfo={dbInfo}
                 isSyncing={isSyncing}
+                isFetchingTab={isFetchingTab}
                 onSyncNow={handleTriggerSyncWithConfirmation}
+                onFetchFromDatabase={handleFetchFromDatabase}
                 onSelectSubmission={(sub) => setInspectedSubmission(sub)}
-                onDeleteSubmission={handleDeleteSubmission}
+                onUpdateSubmission={handleUpdateSubmission}
+                onBulkUpdateSubmissions={handleBulkUpdateSubmissions}
+                onDeleteSubmissions={handleDeleteSubmissions}
                 onNavigateToExam={() => setActiveTab('exam')}
               />
             )}
@@ -811,6 +959,8 @@ export default function App() {
               <QuestionBankView
                 questions={questions}
                 examConfig={examConfig}
+                isFetchingTab={isFetchingTab}
+                onFetchFromDatabase={handleFetchFromDatabase}
                 onUpdateExamConfig={setExamConfig}
                 onAddQuestion={handleAddQuestion}
                 onUpdateQuestion={handleUpdateQuestion}
@@ -824,6 +974,8 @@ export default function App() {
               <StudentManagerView
                 students={students}
                 submissions={submissions}
+                isFetchingTab={isFetchingTab}
+                onFetchFromDatabase={handleFetchFromDatabase}
                 onAddStudent={handleAddStudent}
                 onUpdateStudent={handleUpdateStudent}
                 onDeleteStudents={handleDeleteStudents}
@@ -837,13 +989,25 @@ export default function App() {
                 gasWebAppUrl={gasWebAppUrl}
                 onUpdateGasWebAppUrl={setGasWebAppUrl}
                 isSyncing={isSyncing}
+                isFetchingTab={isFetchingTab}
                 syncError={syncError}
                 dbInfo={dbInfo}
                 students={students}
                 questions={questions}
                 submissions={submissions}
+                passingGrade={examConfig.passingGrade}
                 onSyncWithConfirmation={handleTriggerSyncWithConfirmation}
                 onSimulateLocalGasSync={handleSimulateLocalGasSync}
+                onFetchFromDatabase={handleFetchFromDatabase}
+                onUpdateSubmission={handleUpdateSubmission}
+                onBulkUpdateSubmissions={handleBulkUpdateSubmissions}
+                onDeleteSubmissions={handleDeleteSubmissions}
+                onUpdateStudent={handleUpdateStudent}
+                onBulkUpdateStudents={handleBulkUpdateStudents}
+                onDeleteStudents={handleDeleteStudents}
+                onUpdateQuestion={handleUpdateQuestion}
+                onBulkUpdateQuestions={handleBulkUpdateQuestions}
+                onDeleteQuestions={handleDeleteQuestions}
               />
             )}
           </>

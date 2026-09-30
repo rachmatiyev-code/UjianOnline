@@ -9,12 +9,16 @@ import {
   Eye,
   X,
   History,
+  CloudDownload,
 } from 'lucide-react';
 import { Student, ExamSubmission } from '../types/exam';
+import { DatabaseTabName } from '../services/workspaceService';
 
 interface StudentManagerViewProps {
   students: Student[];
   submissions: ExamSubmission[];
+  isFetchingTab: DatabaseTabName | 'ALL' | null;
+  onFetchFromDatabase: (tab: DatabaseTabName | 'ALL') => void;
   onAddStudent: (student: Student) => void;
   onUpdateStudent: (student: Student) => void;
   onDeleteStudents: (ids: string[]) => void;
@@ -28,6 +32,8 @@ interface StudentManagerViewProps {
 export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
   students,
   submissions,
+  isFetchingTab,
+  onFetchFromDatabase,
   onAddStudent,
   onUpdateStudent,
   onDeleteStudents,
@@ -153,14 +159,48 @@ export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenCreate}
-          className="px-4 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap self-start lg:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Tambah Data Siswa Baru</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+          <button
+            type="button"
+            onClick={() => onFetchFromDatabase('Data_Siswa')}
+            disabled={isFetchingTab !== null}
+            className="px-3.5 py-2 text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-200 hover:bg-sky-100 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <CloudDownload
+              className={`w-3.5 h-3.5 text-sky-700 ${
+                isFetchingTab === 'Data_Siswa' ? 'animate-bounce' : ''
+              }`}
+            />
+            <span>
+              {isFetchingTab === 'Data_Siswa'
+                ? 'Mengambil...'
+                : 'Ambil Data Siswa dari DB'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onFetchFromDatabase('Riwayat_Partisipasi')}
+            disabled={isFetchingTab !== null}
+            className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <CloudDownload
+              className={`w-3.5 h-3.5 text-emerald-700 ${
+                isFetchingTab === 'Riwayat_Partisipasi' ? 'animate-bounce' : ''
+              }`}
+            />
+            <span>Ambil Riwayat Partisipasi</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleOpenCreate}
+            className="px-4 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Data Siswa Baru</span>
+          </button>
+        </div>
       </div>
 
       {/* Multi-Select & Filter Bar (Pilih, Edit, Hapus) */}
