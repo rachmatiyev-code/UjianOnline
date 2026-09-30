@@ -21,11 +21,13 @@ import {
   saveServerSharedState,
   appendServerSubmission,
   buildShareableAppUrl,
+  DEFAULT_GAS_URL,
   DatabaseTabName,
   DatabaseSnapshot,
   FOLDER_NAME,
   SPREADSHEET_TITLE,
 } from './services/workspaceService';
+import persistedConfig from './config/persistedConfig.json';
 import { DashboardView } from './components/DashboardView';
 import { ExamTakerView } from './components/ExamTakerView';
 import { QuestionBankView } from './components/QuestionBankView';
@@ -84,6 +86,8 @@ function getGasUrlFromQuery(): string {
   }
 }
 
+const persistedCfg = persistedConfig as any;
+
 export default function App() {
   const [userSession, setUserSession] = useState<UserSession | null>(() =>
     loadFromStorage<UserSession | null>(STORAGE_KEYS.SESSION, null)
@@ -97,25 +101,50 @@ export default function App() {
   });
 
   const [examConfig, setExamConfig] = useState<ExamConfig>(() =>
-    loadFromStorage(STORAGE_KEYS.CONFIG, INITIAL_EXAM_CONFIG)
+    loadFromStorage(
+      STORAGE_KEYS.CONFIG,
+      persistedCfg?.examConfig || INITIAL_EXAM_CONFIG
+    )
   );
   const [questions, setQuestions] = useState<Question[]>(() =>
-    loadFromStorage(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS)
+    loadFromStorage(
+      STORAGE_KEYS.QUESTIONS,
+      Array.isArray(persistedCfg?.questions) && persistedCfg.questions.length > 0
+        ? persistedCfg.questions
+        : INITIAL_QUESTIONS
+    )
   );
   const [students, setStudents] = useState<Student[]>(() =>
-    loadFromStorage(STORAGE_KEYS.STUDENTS, INITIAL_STUDENTS)
+    loadFromStorage(
+      STORAGE_KEYS.STUDENTS,
+      Array.isArray(persistedCfg?.students) && persistedCfg.students.length > 0
+        ? persistedCfg.students
+        : INITIAL_STUDENTS
+    )
   );
   const [submissions, setSubmissions] = useState<ExamSubmission[]>(() =>
-    loadFromStorage(STORAGE_KEYS.SUBMISSIONS, INITIAL_SUBMISSIONS)
+    loadFromStorage(
+      STORAGE_KEYS.SUBMISSIONS,
+      Array.isArray(persistedCfg?.submissions) &&
+        persistedCfg.submissions.length > 0
+        ? persistedCfg.submissions
+        : INITIAL_SUBMISSIONS
+    )
   );
   const [dbInfo, setDbInfo] = useState<WorkspaceDatabaseInfo | null>(() =>
-    loadFromStorage(STORAGE_KEYS.DB_INFO, null)
+    loadFromStorage(STORAGE_KEYS.DB_INFO, persistedCfg?.dbInfo || null)
   );
   const [teacherPassword, setTeacherPassword] = useState<string>(() =>
-    loadFromStorage(STORAGE_KEYS.TEACHER_PASSWORD, DEFAULT_TEACHER_PASSWORD)
+    loadFromStorage(
+      STORAGE_KEYS.TEACHER_PASSWORD,
+      persistedCfg?.teacherPassword || DEFAULT_TEACHER_PASSWORD
+    )
   );
   const [teacherProfile, setTeacherProfile] = useState<TeacherProfile>(() =>
-    loadFromStorage(STORAGE_KEYS.TEACHER_PROFILE, DEFAULT_TEACHER_PROFILE)
+    loadFromStorage(
+      STORAGE_KEYS.TEACHER_PROFILE,
+      persistedCfg?.teacherProfile || DEFAULT_TEACHER_PROFILE
+    )
   );
   const [isTeacherProfileModalOpen, setIsTeacherProfileModalOpen] =
     useState(false);
@@ -128,18 +157,31 @@ export default function App() {
     mode: 'verify',
   });
 
-  // Google Apps Script Web App state (Zero Firebase)
+  // 1. Simpan URL GAS Secara Permanen di Konfigurasi Frontend (DEFAULT_GAS_URL fallback)
   const [gasWebAppUrl, setGasWebAppUrl] = useState<string>(() => {
     const fromQuery = getGasUrlFromQuery();
     if (fromQuery) return fromQuery;
-    return loadFromStorage(STORAGE_KEYS.GAS_WEB_APP_URL, '');
+    const savedLocal = loadFromStorage(STORAGE_KEYS.GAS_WEB_APP_URL, '');
+    return savedLocal || DEFAULT_GAS_URL;
   });
   const [databaseSnapshot, setDatabaseSnapshot] = useState<DatabaseSnapshot>(
     () =>
       loadFromStorage<DatabaseSnapshot>(STORAGE_KEYS.DATABASE_SNAPSHOT, {
-        students: INITIAL_STUDENTS,
-        questions: INITIAL_QUESTIONS,
-        submissions: INITIAL_SUBMISSIONS,
+        students:
+          Array.isArray(persistedCfg?.students) &&
+          persistedCfg.students.length > 0
+            ? persistedCfg.students
+            : INITIAL_STUDENTS,
+        questions:
+          Array.isArray(persistedCfg?.questions) &&
+          persistedCfg.questions.length > 0
+            ? persistedCfg.questions
+            : INITIAL_QUESTIONS,
+        submissions:
+          Array.isArray(persistedCfg?.submissions) &&
+          persistedCfg.submissions.length > 0
+            ? persistedCfg.submissions
+            : INITIAL_SUBMISSIONS,
         updatedAt: new Date().toISOString(),
       })
   );
@@ -152,7 +194,7 @@ export default function App() {
   const [isInitialServerCheckDone, setIsInitialServerCheckDone] =
     useState(false);
 
-  const hasAutoFetchedGasRef = useRef(false);
+  const lastAutoFetchedGasUrlRef = useRef<string>('');
 
   // Modals state
   const [inspectedSubmission, setInspectedSubmission] =
@@ -182,13 +224,45 @@ export default function App() {
     }
   }, []);
 
-  // 1. On initial load, sync with Server Shared State (/api/state) & URL ?gas= parameter
-  // This ensures shared links NEVER load dummy data if the teacher has saved/edited data or connected Google Sheets.
+  // Helper function: Auto-fetch data from Google Sheets via GAS (fetchDataFromGAS)
+  const fetchDataFromGAS = useCallback(
+    async (targetUrl: string, sheetIdHint?: string) => {
+      const cleanUrl = (targetUrl || DEFAULT_GAS_URL || '').trim();
+      if (!cleanUrl) return;
+      try {
+        const result = await fetchFromDatabaseViaGas(
+          cleanUrl,
+          'ALL',
+          databaseSnapshot,
+          sheetIdHint || dbInfo?.spreadsheetId
+        );
+        if (result.source === 'gas_remote') {
+          if (result.students && result.students.length > 0) {
+            setStudents(result.students);
+          }
+          if (result.questions && result.questions.length > 0) {
+            setQuestions(result.questions);
+          }
+          if (result.submissions && result.submissions.length > 0) {
+            setSubmissions(result.submissions);
+          }
+          if (result.dbInfo) {
+            setDbInfo(result.dbInfo);
+          }
+        }
+      } catch {
+        // Ignore silent background auto-fetch errors
+      }
+    },
+    [databaseSnapshot, dbInfo?.spreadsheetId]
+  );
+
+  // 2. Load persistent state from Server (/api/state -> ./db_state.json) & trigger Auto-Fetch GAS
   useEffect(() => {
     let isMounted = true;
     async function initSharedState() {
       const urlGas = getGasUrlFromQuery();
-      const serverRes = await fetchServerSharedState();
+      const serverState = await fetchServerSharedState();
 
       if (!isMounted) return;
 
@@ -206,45 +280,50 @@ export default function App() {
           (localStudents.length !== INITIAL_STUDENTS.length ||
             localStudents[0]?.name !== INITIAL_STUDENTS[0]?.name));
 
-      let effectiveGasUrl = urlGas || localGasUrl;
+      let effectiveGasUrl = urlGas || localGasUrl || DEFAULT_GAS_URL;
 
-      if (serverRes.hasServerData && serverRes.state) {
-        const st = serverRes.state;
-        // If this browser doesn't have custom local edits OR is opening a shared link, load the server state
-        if (!isLocalDifferentFromDummy || urlGas) {
-          if (Array.isArray(st.students)) setStudents(st.students);
-          if (Array.isArray(st.questions)) setQuestions(st.questions);
-          if (Array.isArray(st.submissions)) setSubmissions(st.submissions);
-          if (st.examConfig) setExamConfig(st.examConfig);
-          if (st.teacherProfile) setTeacherProfile(st.teacherProfile);
-          if (st.teacherPassword) setTeacherPassword(st.teacherPassword);
-          if (st.dbInfo) setDbInfo(st.dbInfo);
-          if (st.gasWebAppUrl && !urlGas) {
-            setGasWebAppUrl(st.gasWebAppUrl);
-            effectiveGasUrl = st.gasWebAppUrl;
+      const hasServerSavedState =
+        serverState &&
+        (serverState.isCustomized ||
+          Boolean(serverState.gasWebAppUrl) ||
+          Array.isArray(serverState.students) ||
+          Array.isArray(serverState.questions));
+
+      if (hasServerSavedState && serverState) {
+        const currentSession = loadFromStorage<UserSession | null>(
+          STORAGE_KEYS.SESSION,
+          null
+        );
+        // Load server state from ./db_state.json for any student or new device opening the link
+        if (
+          !isLocalDifferentFromDummy ||
+          urlGas ||
+          currentSession?.role !== 'guru'
+        ) {
+          if (Array.isArray(serverState.students)) {
+            setStudents(serverState.students);
           }
-        } else {
-          // If server has data, still prefer more recent server data unless local is actively a teacher session
-          const currentSession = loadFromStorage<UserSession | null>(
-            STORAGE_KEYS.SESSION,
-            null
-          );
-          if (currentSession?.role !== 'guru') {
-            if (Array.isArray(st.students)) setStudents(st.students);
-            if (Array.isArray(st.questions)) setQuestions(st.questions);
-            if (Array.isArray(st.submissions)) setSubmissions(st.submissions);
-            if (st.examConfig) setExamConfig(st.examConfig);
-            if (st.teacherProfile) setTeacherProfile(st.teacherProfile);
-            if (st.teacherPassword) setTeacherPassword(st.teacherPassword);
-            if (st.dbInfo) setDbInfo(st.dbInfo);
-            if (st.gasWebAppUrl && !effectiveGasUrl) {
-              setGasWebAppUrl(st.gasWebAppUrl);
-              effectiveGasUrl = st.gasWebAppUrl;
-            }
+          if (Array.isArray(serverState.questions)) {
+            setQuestions(serverState.questions);
           }
+          if (Array.isArray(serverState.submissions)) {
+            setSubmissions(serverState.submissions);
+          }
+          if (serverState.examConfig) setExamConfig(serverState.examConfig);
+          if (serverState.teacherProfile) {
+            setTeacherProfile(serverState.teacherProfile);
+          }
+          if (serverState.teacherPassword) {
+            setTeacherPassword(serverState.teacherPassword);
+          }
+          if (serverState.dbInfo) setDbInfo(serverState.dbInfo);
+        }
+        if (serverState.gasWebAppUrl && !urlGas) {
+          setGasWebAppUrl(serverState.gasWebAppUrl);
+          effectiveGasUrl = serverState.gasWebAppUrl;
         }
       } else if (isLocalDifferentFromDummy) {
-        // Server does not have data yet, but this browser has custom teacher data -> seed the server immediately!
+        // Seed ./db_state.json on the server if this teacher browser already has custom data
         await saveServerSharedState({
           students,
           questions,
@@ -259,34 +338,13 @@ export default function App() {
 
       setIsInitialServerCheckDone(true);
 
-      // If we have a Google Apps Script / Sheets URL (from query, server, or local), auto-fetch live data from Sheets!
-      if (effectiveGasUrl && !hasAutoFetchedGasRef.current) {
-        hasAutoFetchedGasRef.current = true;
-        try {
-          const result = await fetchFromDatabaseViaGas(
-            effectiveGasUrl,
-            'ALL',
-            undefined,
-            serverRes.state?.dbInfo?.spreadsheetId || dbInfo?.spreadsheetId
-          );
-          if (!isMounted) return;
-          if (result.source === 'gas_remote') {
-            if (result.students && result.students.length > 0) {
-              setStudents(result.students);
-            }
-            if (result.questions && result.questions.length > 0) {
-              setQuestions(result.questions);
-            }
-            if (result.submissions && result.submissions.length > 0) {
-              setSubmissions(result.submissions);
-            }
-            if (result.dbInfo) {
-              setDbInfo(result.dbInfo);
-            }
-          }
-        } catch {
-          // Silent fallback if offline
-        }
+      // 3. Auto-fetch from Google Sheets via GAS on initial load if GAS URL is available
+      if (effectiveGasUrl) {
+        lastAutoFetchedGasUrlRef.current = effectiveGasUrl;
+        await fetchDataFromGAS(
+          effectiveGasUrl,
+          serverState?.dbInfo?.spreadsheetId || dbInfo?.spreadsheetId
+        );
       }
     }
 
@@ -295,6 +353,21 @@ export default function App() {
       isMounted = false;
     };
   }, []);
+
+  // 3. Panggil Auto-Fetch GAS Saat Mode Siswa Aktif atau saat URL GAS tersedia
+  useEffect(() => {
+    const activeGasUrl = (gasWebAppUrl || DEFAULT_GAS_URL || '').trim();
+    if (!activeGasUrl) return;
+
+    if (
+      userSession?.role === 'siswa' ||
+      !userSession ||
+      lastAutoFetchedGasUrlRef.current !== activeGasUrl
+    ) {
+      lastAutoFetchedGasUrlRef.current = activeGasUrl;
+      fetchDataFromGAS(activeGasUrl);
+    }
+  }, [userSession?.role, gasWebAppUrl, fetchDataFromGAS]);
 
   // Automatically persist state changes to the server so shared links ALWAYS get live data instead of dummy data
   useEffect(() => {

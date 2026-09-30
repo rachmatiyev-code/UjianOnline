@@ -6,7 +6,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_FILE_PATH = path.resolve(__dirname, '.ujianonline_server_state.json');
+const DB_STATE_FILE = './db_state.json';
+const PERSISTED_CONFIG_FILE = path.resolve(
+  __dirname,
+  'src/config/persistedConfig.json'
+);
 
 interface ServerSharedState {
   isCustomized: boolean;
@@ -21,22 +25,46 @@ interface ServerSharedState {
   dbInfo?: any;
 }
 
-function readServerState(): ServerSharedState | null {
+function readDbState(): ServerSharedState | null {
   try {
-    if (!fs.existsSync(DATA_FILE_PATH)) return null;
-    const raw = fs.readFileSync(DATA_FILE_PATH, 'utf-8');
-    if (!raw.trim()) return null;
-    return JSON.parse(raw) as ServerSharedState;
+    if (fs.existsSync(DB_STATE_FILE)) {
+      const data = fs.readFileSync(DB_STATE_FILE, 'utf-8');
+      if (data.trim()) {
+        return JSON.parse(data) as ServerSharedState;
+      }
+    }
+    if (fs.existsSync(PERSISTED_CONFIG_FILE)) {
+      const fallbackData = fs.readFileSync(PERSISTED_CONFIG_FILE, 'utf-8');
+      if (fallbackData.trim()) {
+        const parsed = JSON.parse(fallbackData);
+        if (parsed && parsed.isCustomized) {
+          return parsed as ServerSharedState;
+        }
+      }
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-function writeServerState(nextState: ServerSharedState): void {
+function writeDbState(newState: ServerSharedState): void {
   try {
-    fs.writeFileSync(DATA_FILE_PATH, JSON.stringify(nextState, null, 2), 'utf-8');
+    // 1. Persist to ./db_state.json as requested
+    fs.writeFileSync(DB_STATE_FILE, JSON.stringify(newState, null, 2), 'utf-8');
+
+    // 2. Also persist to src/config/persistedConfig.json so DEFAULT_GAS_URL & state survive rebuilds/shares
+    const configPayload = {
+      defaultGasUrl: newState.gasWebAppUrl || '',
+      ...newState,
+    };
+    fs.writeFileSync(
+      PERSISTED_CONFIG_FILE,
+      JSON.stringify(configPayload, null, 2),
+      'utf-8'
+    );
   } catch (err) {
-    console.error('Failed to persist server state:', err);
+    console.error('Failed to persist db_state.json:', err);
   }
 }
 
@@ -44,43 +72,60 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
 
-  // GET /api/state — Returns the shared teacher-configured state for any device opening the link
+  // Saat membaca state (GET /api/state)
   app.get('/api/state', (_req, res) => {
-    const state = readServerState();
-    if (!state) {
+    try {
+      if (fs.existsSync(DB_STATE_FILE)) {
+        const data = fs.readFileSync(DB_STATE_FILE, 'utf-8');
+        res.json(JSON.parse(data));
+        return;
+      }
+      const fallback = readDbState();
+      if (fallback) {
+        res.json(fallback);
+        return;
+      }
       res.json({ isCustomized: false });
-      return;
+    } catch {
+      res.json({ isCustomized: false });
     }
-    res.json(state);
   });
 
-  // POST /api/state — Updates the shared state when teacher edits data, imports bulk students, or syncs DB
+  // Saat menyimpan state (POST /api/state)
   app.post('/api/state', (req, res) => {
     const body = req.body || {};
-    const existing = readServerState() || {
+    const existing = readDbState() || {
       isCustomized: true,
       updatedAt: new Date().toISOString(),
     };
 
-    const merged: ServerSharedState = {
+    const newState: ServerSharedState = {
       ...existing,
       isCustomized: true,
       updatedAt: new Date().toISOString(),
-      ...(body.gasWebAppUrl !== undefined ? { gasWebAppUrl: body.gasWebAppUrl } : {}),
-      ...(body.teacherProfile !== undefined ? { teacherProfile: body.teacherProfile } : {}),
-      ...(body.teacherPassword !== undefined ? { teacherPassword: body.teacherPassword } : {}),
+      ...(body.gasWebAppUrl !== undefined
+        ? { gasWebAppUrl: body.gasWebAppUrl }
+        : {}),
+      ...(body.teacherProfile !== undefined
+        ? { teacherProfile: body.teacherProfile }
+        : {}),
+      ...(body.teacherPassword !== undefined
+        ? { teacherPassword: body.teacherPassword }
+        : {}),
       ...(body.examConfig !== undefined ? { examConfig: body.examConfig } : {}),
       ...(Array.isArray(body.students) ? { students: body.students } : {}),
       ...(Array.isArray(body.questions) ? { questions: body.questions } : {}),
-      ...(Array.isArray(body.submissions) ? { submissions: body.submissions } : {}),
+      ...(Array.isArray(body.submissions)
+        ? { submissions: body.submissions }
+        : {}),
       ...(body.dbInfo !== undefined ? { dbInfo: body.dbInfo } : {}),
     };
 
-    writeServerState(merged);
-    res.json({ status: 'ok', updatedAt: merged.updatedAt });
+    writeDbState(newState);
+    res.json(newState);
   });
 
-  // POST /api/submission — Atomic append when a student submits an exam via shared link
+  // POST /api/submission — Menambahkan hasil ujian siswa ke ./db_state.json
   app.post('/api/submission', (req, res) => {
     const { submission, newStudent } = req.body || {};
     if (!submission || !submission.id) {
@@ -88,7 +133,7 @@ async function startServer() {
       return;
     }
 
-    const existing = readServerState() || {
+    const existing = readDbState() || {
       isCustomized: true,
       updatedAt: new Date().toISOString(),
       students: [],
@@ -96,13 +141,17 @@ async function startServer() {
       submissions: [],
     };
 
-    const prevSubs = Array.isArray(existing.submissions) ? existing.submissions : [];
+    const prevSubs = Array.isArray(existing.submissions)
+      ? existing.submissions
+      : [];
     const nextSubs = [
       submission,
       ...prevSubs.filter((s: any) => s.id !== submission.id),
     ];
 
-    let nextStudents = Array.isArray(existing.students) ? existing.students : [];
+    let nextStudents = Array.isArray(existing.students)
+      ? existing.students
+      : [];
     if (newStudent && newStudent.id) {
       const exists = nextStudents.some(
         (st: any) => st.id === newStudent.id || st.nisn === newStudent.nisn
@@ -112,7 +161,7 @@ async function startServer() {
       }
     }
 
-    const merged: ServerSharedState = {
+    const newState: ServerSharedState = {
       ...existing,
       isCustomized: true,
       updatedAt: new Date().toISOString(),
@@ -120,7 +169,7 @@ async function startServer() {
       students: nextStudents,
     };
 
-    writeServerState(merged);
+    writeDbState(newState);
     res.json({ status: 'ok', submissionsCount: nextSubs.length });
   });
 

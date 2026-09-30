@@ -9,6 +9,17 @@ import {
   INITIAL_STUDENTS,
   INITIAL_SUBMISSIONS,
 } from '../data/initialData';
+import persistedConfig from '../config/persistedConfig.json';
+
+/**
+ * Permanent Default Fallback Google Apps Script Web App URL.
+ * Siswa yang membuka link tanpa localStorage guru akan langsung terhubung ke database Google Sheets yang sama.
+ */
+export const DEFAULT_GAS_URL: string =
+  (persistedConfig as any)?.defaultGasUrl ||
+  (persistedConfig as any)?.gasWebAppUrl ||
+  (import.meta as any)?.env?.VITE_DEFAULT_GAS_URL ||
+  '';
 
 export type DatabaseTabName =
   | 'Hasil_Ujian'
@@ -1109,7 +1120,7 @@ async function tryFetchSheetRowsViaGviz(
 export async function fetchFromDatabaseViaGas(
   gasWebAppUrl: string,
   targetTab: DatabaseTabName | 'ALL',
-  snapshot: DatabaseSnapshot,
+  snapshot?: DatabaseSnapshot,
   knownSpreadsheetId?: string
 ): Promise<{
   students?: Student[];
@@ -1118,19 +1129,19 @@ export async function fetchFromDatabaseViaGas(
   dbInfo?: WorkspaceDatabaseInfo;
   source: 'gas_remote' | 'database_snapshot';
 }> {
-  const trimmedUrl = gasWebAppUrl.trim();
+  const trimmedUrl = (gasWebAppUrl || DEFAULT_GAS_URL || '').trim();
 
-  // Safe non-empty fallback pools so we never return 0 items if snapshot was emptied
+  // Safe non-empty fallback pools so we never crash if snapshot is undefined
   const safeSnapshotStudents =
-    snapshot.students && snapshot.students.length > 0
+    snapshot?.students && snapshot.students.length > 0
       ? snapshot.students
       : INITIAL_STUDENTS;
   const safeSnapshotQuestions =
-    snapshot.questions && snapshot.questions.length > 0
+    snapshot?.questions && snapshot.questions.length > 0
       ? snapshot.questions
       : INITIAL_QUESTIONS;
   const safeSnapshotSubmissions =
-    snapshot.submissions && snapshot.submissions.length > 0
+    snapshot?.submissions && snapshot.submissions.length > 0
       ? snapshot.submissions
       : INITIAL_SUBMISSIONS;
 
@@ -1545,8 +1556,9 @@ export async function appendServerSubmission(
 export function buildShareableAppUrl(gasWebAppUrl?: string): string {
   const baseUrl = `${window.location.origin}${window.location.pathname}`;
   const params = new URLSearchParams();
-  if (gasWebAppUrl && gasWebAppUrl.trim()) {
-    params.set('gas', gasWebAppUrl.trim());
+  const effectiveGas = (gasWebAppUrl || DEFAULT_GAS_URL || '').trim();
+  if (effectiveGas) {
+    params.set('gas', effectiveGas);
   }
   const qs = params.toString();
   return qs ? `${baseUrl}?${qs}` : baseUrl;
