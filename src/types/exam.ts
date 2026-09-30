@@ -93,6 +93,15 @@ export interface WorkspaceDatabaseInfo {
 
 export type UserRole = 'guru' | 'siswa';
 
+export interface TeacherProfile {
+  name: string;
+  identifier: string; // NIP / NUPTK / ID Guru
+  email: string;
+  schoolName: string;
+  subjectName: string;
+  roleTitle: string;
+}
+
 export interface UserSession {
   role: UserRole;
   name: string;
@@ -100,5 +109,7 @@ export interface UserSession {
   studentId?: string;
   className?: string;
   email?: string;
+  schoolName?: string;
+  subjectName?: string;
 }
 

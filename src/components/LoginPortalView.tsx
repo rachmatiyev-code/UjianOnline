@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   GraduationCap,
@@ -9,23 +9,30 @@ import {
   Eye,
   LayoutDashboard,
   KeyRound,
+  UserCheck,
 } from 'lucide-react';
-import { Student, UserRole, UserSession } from '../types/exam';
+import { Student, UserRole, UserSession, TeacherProfile } from '../types/exam';
 
 interface LoginPortalViewProps {
   students: Student[];
+  teacherProfile: TeacherProfile;
   teacherPassword: string;
   isDefaultPassword: boolean;
   onLogin: (session: UserSession, newStudentIfCreated?: Student) => void;
+  onUpdateTeacherProfile: (next: TeacherProfile) => void;
   onUpdateTeacherPassword: (newPassword: string) => void;
+  onOpenEditTeacherProfile: () => void;
 }
 
 export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
   students,
+  teacherProfile,
   teacherPassword,
   isDefaultPassword,
   onLogin,
+  onUpdateTeacherProfile,
   onUpdateTeacherPassword,
+  onOpenEditTeacherProfile,
 }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('siswa');
 
@@ -39,11 +46,43 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
   const [customStudentEmail, setCustomStudentEmail] = useState('');
 
   // Teacher/Admin login & password state
-  const [teacherName, setTeacherName] = useState('Budi Santoso, M.Pd.');
-  const [teacherNip, setTeacherNip] = useState('198604122011011004');
-  const [teacherEmail, setTeacherEmail] = useState('budi.santoso@sekolah.sch.id');
+  const [teacherName, setTeacherName] = useState(
+    teacherProfile?.name || 'Budi Santoso, M.Pd.'
+  );
+  const [teacherNip, setTeacherNip] = useState(
+    teacherProfile?.identifier || '198604122011011004'
+  );
+  const [teacherEmail, setTeacherEmail] = useState(
+    teacherProfile?.email || 'budi.santoso@sekolah.sch.id'
+  );
+  const [teacherSchool, setTeacherSchool] = useState(
+    teacherProfile?.schoolName || 'SMA Negeri 1 Nusantara'
+  );
+  const [teacherSubject, setTeacherSubject] = useState(
+    teacherProfile?.subjectName || 'Informatika & Ilmu Komputer'
+  );
   const [inputPassword, setInputPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (!teacherProfile) return;
+    setTeacherName(teacherProfile.name || '');
+    setTeacherNip(teacherProfile.identifier || '');
+    setTeacherEmail(teacherProfile.email || '');
+    setTeacherSchool(teacherProfile.schoolName || '');
+    setTeacherSubject(teacherProfile.subjectName || '');
+  }, [teacherProfile]);
+
+  useEffect(() => {
+    if (students.length > 0 && selectedStudentId === 'NEW') {
+      setSelectedStudentId(students[0].id);
+    } else if (
+      selectedStudentId !== 'NEW' &&
+      !students.some((s) => s.id === selectedStudentId)
+    ) {
+      setSelectedStudentId(students[0]?.id || 'NEW');
+    }
+  }, [students, selectedStudentId]);
 
   // Inline password configuration panel state for Teacher
   const [isSettingPassword, setIsSettingPassword] = useState(false);
@@ -126,11 +165,23 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
         return;
       }
 
-      onLogin({
-        role: 'guru',
+      const updatedProfile: TeacherProfile = {
+        ...teacherProfile,
         name: teacherName.trim(),
         identifier: teacherNip.trim() || 'ADMIN-01',
         email: teacherEmail.trim() || 'admin@sekolah.sch.id',
+        schoolName: teacherSchool.trim() || teacherProfile.schoolName,
+        subjectName: teacherSubject.trim() || teacherProfile.subjectName,
+      };
+      onUpdateTeacherProfile(updatedProfile);
+
+      onLogin({
+        role: 'guru',
+        name: updatedProfile.name,
+        identifier: updatedProfile.identifier,
+        email: updatedProfile.email,
+        schoolName: updatedProfile.schoolName,
+        subjectName: updatedProfile.subjectName,
       });
     }
   };
@@ -600,43 +651,82 @@ export const LoginPortalView: React.FC<LoginPortalViewProps> = ({
                   </div>
                 </div>
 
-                {/* Teacher Profile Metadata */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Nama Guru / Administrator *
-                    </label>
-                    <input
-                      type="text"
-                      value={teacherName}
-                      onChange={(e) => setTeacherName(e.target.value)}
-                      placeholder="Budi Santoso, M.Pd."
-                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
-                    />
+                {/* Teacher Profile Metadata (Editable directly on Login or via Modal) */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-sky-700" />
+                      <span>Data Identitas Guru / Pengampu Ujian</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={onOpenEditTeacherProfile}
+                      className="text-xs font-semibold text-sky-700 hover:text-sky-800"
+                    >
+                      Buka Editor Lengkap Data Guru →
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      NIP / ID Pengajar
-                    </label>
-                    <input
-                      type="text"
-                      value={teacherNip}
-                      onChange={(e) => setTeacherNip(e.target.value)}
-                      placeholder="198604122011011004"
-                      className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Email Institusi
-                    </label>
-                    <input
-                      type="email"
-                      value={teacherEmail}
-                      onChange={(e) => setTeacherEmail(e.target.value)}
-                      placeholder="budi.santoso@sekolah.sch.id"
-                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Nama Guru / Administrator *
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherName}
+                        onChange={(e) => setTeacherName(e.target.value)}
+                        placeholder="Budi Santoso, M.Pd."
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        NIP / NUPTK / ID Guru
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherNip}
+                        onChange={(e) => setTeacherNip(e.target.value)}
+                        placeholder="198604122011011004"
+                        className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Email Guru
+                      </label>
+                      <input
+                        type="email"
+                        value={teacherEmail}
+                        onChange={(e) => setTeacherEmail(e.target.value)}
+                        placeholder="budi.santoso@sekolah.sch.id"
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Nama Sekolah / Instansi
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherSchool}
+                        onChange={(e) => setTeacherSchool(e.target.value)}
+                        placeholder="SMA Negeri 1 Nusantara"
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Mata Pelajaran Diampu
+                      </label>
+                      <input
+                        type="text"
+                        value={teacherSubject}
+                        onChange={(e) => setTeacherSubject(e.target.value)}
+                        placeholder="Evaluasi Sains & Penalaran Kuantitatif"
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-slate-800"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

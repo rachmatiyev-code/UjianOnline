@@ -10,6 +10,7 @@ import {
   X,
   History,
   CloudDownload,
+  Users,
 } from 'lucide-react';
 import { Student, ExamSubmission } from '../types/exam';
 import { DatabaseTabName } from '../services/workspaceService';
@@ -20,6 +21,7 @@ interface StudentManagerViewProps {
   isFetchingTab: DatabaseTabName | 'ALL' | null;
   onFetchFromDatabase: (tab: DatabaseTabName | 'ALL') => void;
   onAddStudent: (student: Student) => void;
+  onBulkAddStudents: (newStudents: Student[], replaceExisting?: boolean) => void;
   onUpdateStudent: (student: Student) => void;
   onDeleteStudents: (ids: string[]) => void;
   onBulkUpdateStudents: (
@@ -35,6 +37,7 @@ export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
   isFetchingTab,
   onFetchFromDatabase,
   onAddStudent,
+  onBulkAddStudents,
   onUpdateStudent,
   onDeleteStudents,
   onBulkUpdateStudents,
@@ -46,6 +49,13 @@ export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [historyStudent, setHistoryStudent] = useState<Student | null>(null);
+
+  // Bulk Add Students Modal State
+  const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
+  const [bulkNamesText, setBulkNamesText] = useState('');
+  const [bulkDefaultClass, setBulkDefaultClass] = useState('XII MIPA 1');
+  const [bulkDefaultStatus, setBulkDefaultStatus] = useState<'Aktif' | 'Nonaktif'>('Aktif');
+  const [replaceExistingOnBulk, setReplaceExistingOnBulk] = useState(false);
 
   // Bulk edit controls
   const [showBulkPanel, setShowBulkPanel] = useState(false);
@@ -139,6 +149,95 @@ export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
     );
   };
 
+  // Parse bulk student lines in real-time (supports "Nama", "No. Nama", "NISN, Nama, Kelas", or Tab-separated from Excel/Sheets)
+  const parsedBulkStudents = useMemo<Student[]>(() => {
+    const lines = bulkNamesText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const today = new Date().toISOString().slice(0, 10);
+    const baseStamp = String(Date.now()).slice(-4);
+
+    return lines
+      .map((line, idx): Student | null => {
+        // Strip leading numbering like "1. ", "1) ", "01 - " if it's followed by a name
+        const cleanedLine = line.replace(/^\d{1,3}[\.\)\-]\s+/, '').trim();
+        if (!cleanedLine) return null;
+
+        const parts = cleanedLine
+          .split(/\t|\||;|,/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+
+        let nisn = '';
+        let name = '';
+        let className = bulkDefaultClass.trim() || 'XII MIPA 1';
+        let email = '';
+
+        if (parts.length === 1) {
+          name = parts[0];
+        } else if (parts.length === 2) {
+          if (/^\d{4,}$/.test(parts[0])) {
+            nisn = parts[0];
+            name = parts[1];
+          } else {
+            name = parts[0];
+            className = parts[1] || className;
+          }
+        } else if (parts.length >= 3) {
+          if (/^\d{4,}$/.test(parts[0])) {
+            nisn = parts[0];
+            name = parts[1];
+            className = parts[2] || className;
+            email = parts[3] || '';
+          } else if (/^\d{4,}$/.test(parts[1])) {
+            nisn = parts[1];
+            name = parts[2];
+            className = parts[3] || className;
+          } else {
+            name = parts[0];
+            className = parts[1] || className;
+            email = parts[2] || '';
+          }
+        }
+
+        if (
+          !name ||
+          name.toLowerCase() === 'nama' ||
+          name.toLowerCase() === 'nama siswa' ||
+          name.toLowerCase() === 'nama lengkap'
+        ) {
+          return null;
+        }
+
+        const generatedNisn =
+          nisn || `0085${baseStamp}${String(idx + 1).padStart(2, '0')}`;
+        const generatedEmail =
+          email ||
+          `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@sekolah.sch.id`;
+
+        return {
+          id: `SIS-${baseStamp}-${String(idx + 1).padStart(2, '0')}`,
+          nisn: generatedNisn,
+          name,
+          className,
+          email: generatedEmail,
+          status: bulkDefaultStatus,
+          joinedAt: today,
+        };
+      })
+      .filter((s): s is Student => s !== null);
+  }, [bulkNamesText, bulkDefaultClass, bulkDefaultStatus]);
+
+  const handleConfirmBulkAdd = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (parsedBulkStudents.length === 0) return;
+    onBulkAddStudents(parsedBulkStudents, replaceExistingOnBulk);
+    setBulkNamesText('');
+    setReplaceExistingOnBulk(false);
+    setIsBulkAddOpen(false);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -194,11 +293,20 @@ export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
 
           <button
             type="button"
+            onClick={() => setIsBulkAddOpen(true)}
+            className="px-3.5 py-2 text-xs font-semibold text-slate-900 bg-amber-50 border border-amber-300 hover:bg-amber-100 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          >
+            <Users className="w-3.5 h-3.5 text-amber-800" />
+            <span>Input Nama Siswa Bulk</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleOpenCreate}
             className="px-4 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
-            <span>Tambah Data Siswa Baru</span>
+            <span>Tambah Siswa Satuan</span>
           </button>
         </div>
       </div>
@@ -617,6 +725,157 @@ export const StudentManagerView: React.FC<StudentManagerViewProps> = ({
                 className="px-5 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 rounded-lg"
               >
                 Simpan Data Siswa
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal Input Nama Siswa Bulk (Massal) */}
+      {isBulkAddOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <form
+            onSubmit={handleConfirmBulkAdd}
+            className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex items-start justify-between border-b border-slate-200 pb-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-sky-700" />
+                  <span>Input Nama Siswa Bulk (Tambah Massal Sekaligus)</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Tempel daftar nama siswa dari Excel, Google Sheets, Word, atau WhatsApp (1 baris = 1 siswa).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBulkAddOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Kelas Default (untuk baris tanpa kelas) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={bulkDefaultClass}
+                  onChange={(e) => setBulkDefaultClass(e.target.value)}
+                  placeholder="Contoh: XII MIPA 1"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Status Keaktifan Default
+                </label>
+                <select
+                  value={bulkDefaultStatus}
+                  onChange={(e) =>
+                    setBulkDefaultStatus(e.target.value as 'Aktif' | 'Nonaktif')
+                  }
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg text-slate-900"
+                >
+                  <option value="Aktif">Aktif</option>
+                  <option value="Nonaktif">Nonaktif</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Daftar Nama Siswa (1 Baris per Siswa) *
+                </label>
+                <span className="text-[11px] font-mono text-sky-800 font-semibold">
+                  Terdeteksi: {parsedBulkStudents.length} Siswa Valid
+                </span>
+              </div>
+              <textarea
+                rows={7}
+                value={bulkNamesText}
+                onChange={(e) => setBulkNamesText(e.target.value)}
+                placeholder={`Contoh 1 (Hanya Nama):\nAhmad Fauzi\nBunga Citra Lestari\nCahyo Nugroho\n\nContoh 2 (NISN, Nama, Kelas):\n0081234561, Dimas Anggara, XII MIPA 2\n0081234562, Eka Putri, XII MIPA 2`}
+                className="w-full px-3.5 py-2.5 text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-sky-700 leading-relaxed"
+              />
+              <p className="text-[11px] text-slate-500 mt-1">
+                Mendukung format: <strong>Nama Saja</strong>, <strong>1. Nama</strong>, <strong>Nama, Kelas</strong>, atau <strong>NISN, Nama, Kelas</strong> (koma, titik koma, atau Tab Excel).
+              </p>
+            </div>
+
+            {/* Option to replace dummy/existing students */}
+            <label className="flex items-start gap-2.5 p-3 bg-amber-50/70 border border-amber-200 rounded-lg cursor-pointer">
+              <input
+                type="checkbox"
+                checked={replaceExistingOnBulk}
+                onChange={(e) => setReplaceExistingOnBulk(e.target.checked)}
+                className="mt-0.5 rounded text-sky-700 focus:ring-sky-600"
+              />
+              <div className="text-xs">
+                <span className="font-semibold text-slate-900">
+                  Ganti seluruh daftar siswa lama/dummy dengan daftar baru ini
+                </span>
+                <p className="text-slate-600 mt-0.5">
+                  Centang opsi ini jika Anda ingin menghapus daftar siswa bawaan (dummy) dan hanya menyimpan daftar siswa yang baru dimasukkan.
+                </p>
+              </div>
+            </label>
+
+            {/* Live Preview Table */}
+            {parsedBulkStudents.length > 0 && (
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-700">
+                  Pratinjau Siswa yang Akan Disimpan ({parsedBulkStudents.length} Siswa)
+                </div>
+                <div className="max-h-40 overflow-y-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-mono">
+                        <th className="py-1.5 px-3">No</th>
+                        <th className="py-1.5 px-3">NISN</th>
+                        <th className="py-1.5 px-3 font-sans">Nama Siswa</th>
+                        <th className="py-1.5 px-3 font-sans">Kelas</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {parsedBulkStudents.map((st, i) => (
+                        <tr key={st.id}>
+                          <td className="py-1.5 px-3 text-slate-500">{i + 1}</td>
+                          <td className="py-1.5 px-3 text-slate-700">{st.nisn}</td>
+                          <td className="py-1.5 px-3 font-sans font-medium text-slate-900">
+                            {st.name}
+                          </td>
+                          <td className="py-1.5 px-3 font-sans text-slate-600">
+                            {st.className}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setIsBulkAddOpen(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={parsedBulkStudents.length === 0}
+                className="px-5 py-2 text-xs font-semibold text-white bg-sky-700 hover:bg-sky-800 disabled:opacity-50 rounded-lg"
+              >
+                Simpan {parsedBulkStudents.length} Siswa Sekarang
               </button>
             </div>
           </form>
