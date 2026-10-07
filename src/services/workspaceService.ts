@@ -443,24 +443,52 @@ export async function syncDataViaGoogleAppsScript(
   }
 
   const tables = buildSheetsTablePayload(students, questions, submissions);
-
-  const response = await fetch(trimmedUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
+  const payloadData = {
+    action: 'syncAll',
+    folderName: FOLDER_NAME,
+    spreadsheetTitle: SPREADSHEET_TITLE,
+    tables,
+    rawModels: {
+      students,
+      questions,
+      submissions,
     },
-    body: JSON.stringify({
-      action: 'syncAll',
-      folderName: FOLDER_NAME,
-      spreadsheetTitle: SPREADSHEET_TITLE,
-      tables,
-      rawModels: {
-        students,
-        questions,
-        submissions,
+  };
+
+  let response: Response;
+  try {
+    // 2. Simple Request (Content-Type: text/plain, no custom headers) & 3. Referrer Policy
+    response = await fetch(trimmedUrl, {
+      method: 'POST',
+      referrerPolicy: 'no-referrer-when-downgrade',
+      headers: {
+        'Content-Type': 'text/plain',
       },
-    }),
-  });
+      body: JSON.stringify(payloadData),
+    });
+  } catch (directErr) {
+    // Optional fallback to /api/gas-proxy if browser blocks cross-origin or strict referrer occurs
+    try {
+      response = await fetch('/api/gas-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          __targetUrl: trimmedUrl,
+          ...payloadData,
+        }),
+      });
+    } catch {
+      throw directErr;
+    }
+  }
+
+  if (response.status === 401) {
+    throw new Error(
+      'Error 401 Unauthorized: Deployment Google Apps Script belum memiliki izin akses publik. ' +
+        'Pastikan di Apps Script: Deploy > New deployment > Execute as: Me > Who has access: Anyone, ' +
+        'lalu salin URL /exec baru dan uji di jendela Incognito.'
+    );
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -1087,7 +1115,10 @@ async function tryFetchSheetRowsViaGviz(
     const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(
       spreadsheetId
     )}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      method: 'GET',
+      referrerPolicy: 'no-referrer-when-downgrade',
+    });
     if (!res.ok) return null;
     const text = await res.text();
     const jsonStart = text.indexOf('{');
@@ -1194,27 +1225,53 @@ export async function fetchFromDatabaseViaGas(
 
   if (trimmedUrl.startsWith('https://script.google.com/')) {
     let resJson: any = null;
+    let authError: string | null = null;
 
-    // Step 1: Try POST with action: 'fetchData'
+    // Step 1: Try POST with action: 'fetchData' (Simple Request text/plain & referrerPolicy: no-referrer-when-downgrade)
     try {
       const response = await fetch(trimmedUrl, {
         method: 'POST',
+        referrerPolicy: 'no-referrer-when-downgrade',
         headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
+          'Content-Type': 'text/plain',
         },
         body: JSON.stringify({
           action: 'fetchData',
           tab: targetTab,
         }),
       });
-      if (response.ok) {
+      if (response.status === 401) {
+        authError =
+          'Error 401 Unauthorized: Deployment Google Apps Script belum memiliki akses publik. ' +
+          'Buka Apps Script > Deploy > New deployment > Execute as: Me > Who has access: Anyone.';
+      } else if (response.ok) {
         resJson = await response.json();
       }
     } catch {
-      resJson = null;
+      // Try fallback to /api/gas-proxy if browser CORS blocks
+      try {
+        const proxyRes = await fetch('/api/gas-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            __targetUrl: trimmedUrl,
+            action: 'fetchData',
+            tab: targetTab,
+          }),
+        });
+        if (proxyRes.status === 401) {
+          authError =
+            'Error 401 Unauthorized: Deployment Google Apps Script belum memiliki akses publik. ' +
+            'Buka Apps Script > Deploy > New deployment > Execute as: Me > Who has access: Anyone.';
+        } else if (proxyRes.ok) {
+          resJson = await proxyRes.json();
+        }
+      } catch {
+        resJson = null;
+      }
     }
 
-    // Step 2: If POST didn't include data/rows (e.g. older Code.gs deployment where doGet returns rows), try GET
+    // Step 2: If POST didn't include data/rows, try GET fallback
     const hasPostPayload =
       resJson &&
       (resJson.data !== undefined ||
@@ -1222,23 +1279,56 @@ export async function fetchFromDatabaseViaGas(
         Array.isArray(resJson.Data_Siswa) ||
         Array.isArray(resJson.Hasil_Ujian));
 
-    if (!hasPostPayload) {
+    if (!hasPostPayload && !authError) {
       try {
         const sep = trimmedUrl.includes('?') ? '&' : '?';
-        const getRes = await fetch(
-          `${trimmedUrl}${sep}action=fetchData&tab=${encodeURIComponent(
-            targetTab
-          )}`
-        );
-        if (getRes.ok) {
+        const getUrl = `${trimmedUrl}${sep}action=fetchData&tab=${encodeURIComponent(
+          targetTab
+        )}`;
+        const getRes = await fetch(getUrl, {
+          method: 'GET',
+          referrerPolicy: 'no-referrer-when-downgrade',
+        });
+        if (getRes.status === 401) {
+          authError =
+            'Error 401 Unauthorized: Deployment Google Apps Script belum memiliki akses publik. ' +
+            'Buka Apps Script > Deploy > New deployment > Execute as: Me > Who has access: Anyone.';
+        } else if (getRes.ok) {
           const getJson = await getRes.json();
           if (getJson && getJson.status !== 'error') {
             resJson = { ...resJson, ...getJson };
           }
         }
       } catch {
-        // ignore GET fallback error
+        // Fallback GET via proxy
+        try {
+          const sep = trimmedUrl.includes('?') ? '&' : '?';
+          const getUrl = `${trimmedUrl}${sep}action=fetchData&tab=${encodeURIComponent(
+            targetTab
+          )}`;
+          const proxyGet = await fetch(
+            `/api/gas-proxy?url=${encodeURIComponent(getUrl)}`,
+            {
+              method: 'GET',
+            }
+          );
+          if (proxyGet.status === 401) {
+            authError =
+              'Error 401 Unauthorized: Deployment Google Apps Script belum memiliki akses publik.';
+          } else if (proxyGet.ok) {
+            const proxyJson = await proxyGet.json();
+            if (proxyJson && proxyJson.status !== 'error') {
+              resJson = { ...resJson, ...proxyJson };
+            }
+          }
+        } catch {
+          // ignore
+        }
       }
+    }
+
+    if (authError) {
+      throw new Error(authError);
     }
 
     if (resJson?.status === 'error') {

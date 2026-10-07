@@ -173,6 +173,56 @@ async function startServer() {
     res.json({ status: 'ok', submissionsCount: nextSubs.length });
   });
 
+  // POST /api/gas-proxy — Server-side relay for Google Apps Script to bypass browser CORS & Referrer Policy issues
+  app.all('/api/gas-proxy', async (req, res) => {
+    try {
+      const targetUrl =
+        (req.query.url as string) ||
+        (req.body && req.body.__targetUrl) ||
+        '';
+
+      if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+        res.status(400).json({
+          status: 'error',
+          message: 'Target URL must be a valid Google Apps Script Web App URL',
+        });
+        return;
+      }
+
+      const method = req.method === 'GET' ? 'GET' : 'POST';
+      let payloadBody: string | undefined = undefined;
+
+      if (method === 'POST') {
+        const bodyCopy = { ...req.body };
+        delete bodyCopy.__targetUrl;
+        payloadBody = JSON.stringify(bodyCopy);
+      }
+
+      const response = await fetch(targetUrl, {
+        method,
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: payloadBody,
+        redirect: 'follow',
+      });
+
+      const text = await response.text();
+      res.status(response.status);
+      try {
+        const json = JSON.parse(text);
+        res.json(json);
+      } catch {
+        res.send(text);
+      }
+    } catch (err: any) {
+      res.status(500).json({
+        status: 'error',
+        message: err?.message || 'Failed to proxy request to Google Apps Script',
+      });
+    }
+  });
+
   const isProd = process.env.NODE_ENV === 'production';
   const distPath = path.resolve(__dirname, 'dist');
 

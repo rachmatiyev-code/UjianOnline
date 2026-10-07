@@ -509,9 +509,41 @@ export const SheetsDatabaseView: React.FC<SheetsDatabaseViewProps> = ({
           )}
         </div>
 
+        {/* Panduan Mengatasi Error 401 & Referrer Policy */}
+        <div className="bg-sky-50/60 border border-sky-200/80 rounded-xl p-4 text-xs text-slate-700 space-y-2">
+          <div className="font-semibold text-sky-900 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-sky-700" />
+            <span>Petunjuk Penting Deployment Google Apps Script (Mencegah Error 401 & CORS)</span>
+          </div>
+          <ol className="list-decimal list-inside space-y-1 text-slate-600 leading-relaxed pl-1">
+            <li>
+              Di editor script (Apps Script), klik tombol <strong>Deploy &gt; New deployment</strong> (buat rilis baru saat ada perubahan).
+            </li>
+            <li>
+              Pilih tipe <strong>Web app</strong>, lalu atur <strong>Execute as</strong>: <code className="font-mono bg-white px-1 py-0.5 rounded border border-slate-200 text-sky-800 font-semibold">Me (email Anda)</code>.
+            </li>
+            <li>
+              Atur <strong>Who has access</strong>: <code className="font-mono bg-white px-1 py-0.5 rounded border border-slate-200 text-emerald-800 font-semibold">Anyone</code> (akses publik tanpa login Google).
+            </li>
+            <li>
+              Salin URL resmi berakhiran <code className="font-mono text-slate-800 font-semibold">.../exec</code> dan uji buka di jendela <strong>Incognito</strong>. Berhasil jika muncul respon teks/JSON langsung tanpa redirect login Google.
+            </li>
+            <li>
+              Aplikasi ini otomatis menggunakan <strong>Simple Request</strong> (<code className="font-mono text-slate-700">text/plain</code>) dan <code className="font-mono text-slate-700">referrerPolicy: &apos;no-referrer-when-downgrade&apos;</code> untuk menghindari penolakan preflight OPTIONS oleh Google.
+            </li>
+          </ol>
+        </div>
+
         {syncError && (
-          <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-            <strong>Pemberitahuan Google Apps Script:</strong> {syncError}
+          <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 space-y-1">
+            <div>
+              <strong>Pemberitahuan Google Apps Script:</strong> {syncError}
+            </div>
+            {syncError.includes('401') && (
+              <div className="text-slate-600 pt-1 border-t border-red-200 text-[11px]">
+                💡 <strong>Solusi 401:</strong> Pastikan di Apps Script: <em>Deploy &gt; Manage deployments / New deployment</em> &gt; <em>Who has access</em> telah diubah menjadi <strong>Anyone</strong> (bukan &quot;Only myself&quot;).
+              </div>
+            )}
           </div>
         )}
       </div>
